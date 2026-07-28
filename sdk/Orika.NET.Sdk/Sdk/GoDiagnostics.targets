@@ -1,0 +1,434 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Orika.NET.Sdk / Sdk / GoDiagnostics.targets
+
+  The <GoExec> task: a drop-in replacement for <Exec> that understands the Go
+  toolchain's diagnostic format and re-emits it through MSBuild's *structured*
+  error channel, so Go compiler / vet / test diagnostics land in the Visual
+  Studio Error List with a real file, line and column - double-clicking one
+  navigates to the offending .go source instead of to Sdk.targets inside the
+  NuGet cache.
+
+  Why not Exec + CustomErrorRegularExpression?
+    CustomErrorRegularExpression only decides *which* lines Exec forwards to
+    Log.LogError(string). That single-argument overload carries no file/line/
+    column, so MSBuild attributes the error to the location of the *task* -
+    i.e. Sdk.targets in %NUGET_PACKAGES%. Navigation stays broken. The only way
+    to populate the canonical fields is the 10-argument overload
+    Log.LogError(subcategory, code, helpKeyword, file, line, col, endLine,
+    endCol, message), which requires a real task - hence this inline task.
+
+  Why RoslynCodeTaskFactory?
+    It is the only inline-task factory that works under BOTH .NET (dotnet
+    build / MSBuild Core) and .NET Framework (Visual Studio's MSBuild.exe), so
+    the SDK package still ships nothing but MSBuild logic - no assembly to
+    build, sign or pack, and no VSIX dependency for command-line builds.
+
+  Go diagnostic shapes handled (verified against go 1.21.5 on Windows):
+
+    # example.com/m/sub                              <- package header
+    sub\a.go:11:23: cannot use impl{} ... (wrong type for method Do)
+    <TAB><TAB>have Do(string) error                  <- continuation lines
+    <TAB><TAB>want Do(int) error
+    # example.com/m
+    .\main.go:6:14: undefined: undefinedThing        <- ".\" / "./" prefix
+    vet.exe: .\main.go:6:13: string literal not terminated
+    (dash dash dash) FAIL: TestB (0.00s)             <- go test
+        a_test.go:8: B() = 1, want 2                 <- basename only!
+    FAIL    example.com/m/sub       0.409s
+-->
+<Project>
+
+  <UsingTask TaskName="GoExec"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Command ParameterType="System.String" Required="true" />
+      <WorkingDirectory ParameterType="System.String" Required="true" />
+      <EnvironmentVariables ParameterType="System.String[]" />
+      <!-- GOBUILD / GOVET / GOTEST - becomes the MSBuild error code. -->
+      <ErrorCode ParameterType="System.String" />
+      <ExitCode ParameterType="System.Int32" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.Collections.Generic" />
+      <Using Namespace="System.Diagnostics" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Text" />
+      <Using Namespace="System.Text.RegularExpressions" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+
+string code = string.IsNullOrEmpty(ErrorCode) ? "GO" : ErrorCode;
+bool isTest = string.Equals(code, "GOTEST", StringComparison.OrdinalIgnoreCase);
+
+string workDir;
+try
+{
+    workDir = string.IsNullOrEmpty(WorkingDirectory)
+        ? Directory.GetCurrentDirectory()
+        : Path.GetFullPath(WorkingDirectory);
+}
+catch (Exception)
+{
+    workDir = Directory.GetCurrentDirectory();
+}
+
+Log.LogMessage(MessageImportance.Low, Command);
+
+// file:line[:col]: message  - the Go toolchain's diagnostic format.
+Regex diagRegex = new Regex(
+    @"^(?<file>(?:[A-Za-z]:)?[^:\r\n]*?\.(?:go|s|S|c|h)):(?<line>\d+)(?::(?<col>\d+))?:\s*(?<msg>.*)$",
+    RegexOptions.CultureInvariant);
+
+// ------------------------------------------------------------------
+// File resolution.
+//
+// go build/vet emit paths relative to the working directory, but the
+// testing package strips every directory component (testing.go does
+// file = file[lastIndexByte(file,'/')+1:]), so "a_test.go:8:" for a test
+// living in sub/ would resolve to a non-existent <root>\a_test.go. When the
+// direct resolution misses, fall back to a one-shot index of source-file
+// base names under the working directory; only an unambiguous hit is used.
+// ------------------------------------------------------------------
+Dictionary<string, string> nameIndex = null;
+
+Func<string, bool> isSourceExt = ext =>
+    ext.Equals(".go", StringComparison.OrdinalIgnoreCase) ||
+    ext.Equals(".s", StringComparison.OrdinalIgnoreCase) ||
+    ext.Equals(".c", StringComparison.OrdinalIgnoreCase) ||
+    ext.Equals(".h", StringComparison.OrdinalIgnoreCase);
+
+Func<string, string> lookupByName = name =>
+{
+    if (nameIndex == null)
+    {
+        nameIndex = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Stack<string> pending = new Stack<string>();
+        pending.Push(workDir);
+        int budget = 20000;
+        while (pending.Count > 0 && budget > 0)
+        {
+            string dir = pending.Pop();
+            string[] files;
+            try { files = Directory.GetFiles(dir); }
+            catch (Exception) { continue; }
+            for (int i = 0; i < files.Length && budget > 0; i++)
+            {
+                if (!isSourceExt(Path.GetExtension(files[i]))) continue;
+                budget--;
+                string key = Path.GetFileName(files[i]);
+                // Ambiguous base name -> refuse to guess (null = known-ambiguous).
+                if (nameIndex.ContainsKey(key)) nameIndex[key] = null;
+                else nameIndex[key] = files[i];
+            }
+            string[] subdirs;
+            try { subdirs = Directory.GetDirectories(dir); }
+            catch (Exception) { continue; }
+            for (int i = 0; i < subdirs.Length; i++)
+            {
+                string leaf = Path.GetFileName(subdirs[i]);
+                if (leaf.Length == 0) continue;
+                if (leaf[0] == '.' || leaf[0] == '_') continue;              // go ignores these too
+                if (leaf.Equals("bin", StringComparison.OrdinalIgnoreCase)) continue;
+                if (leaf.Equals("obj", StringComparison.OrdinalIgnoreCase)) continue;
+                if (leaf.Equals("node_modules", StringComparison.OrdinalIgnoreCase)) continue;
+                pending.Push(subdirs[i]);
+            }
+        }
+    }
+    string hit;
+    return nameIndex.TryGetValue(name, out hit) ? hit : null;
+};
+
+Func<string, string> resolveFile = raw =>
+{
+    string f = raw;
+    if (f.StartsWith("./", StringComparison.Ordinal) || f.StartsWith(".\\", StringComparison.Ordinal))
+        f = f.Substring(2);
+    f = f.Replace('/', Path.DirectorySeparatorChar);
+    string abs;
+    try
+    {
+        abs = Path.IsPathRooted(f) ? Path.GetFullPath(f) : Path.GetFullPath(Path.Combine(workDir, f));
+    }
+    catch (Exception)
+    {
+        return raw;
+    }
+    if (File.Exists(abs)) return abs;
+    string found = lookupByName(Path.GetFileName(f));
+    return found != null ? found : abs;
+};
+
+// ------------------------------------------------------------------
+// Diagnostic buffering: a diagnostic is only emitted once the following
+// line proves it has no more tab-indented continuation lines.
+// ------------------------------------------------------------------
+bool havePending = false;
+bool pendDefer = false;
+string pendFile = null;
+int pendLine = 0;
+int pendCol = 0;
+string pendMsg = null;
+string pendRaw = null;
+bool loggedStructuredError = false;
+bool inFailingTest = false;
+
+// Verdict-pending testing.T output. `go test` (non-verbose) prints
+// "--- FAIL: TestX" BEFORE the test's log lines, but `go test -v` prints the
+// log lines FIRST and the verdict afterwards - and t.Logf and t.Errorf produce
+// byte-identical output. So an indented "file.go:N: text" line seen while no
+// verdict is known is held here and resolved by the next "--- FAIL" (errors)
+// or "--- PASS"/"--- SKIP" (messages).
+// Entry layout: { file, line, column, message, rawLine }.
+List<object[]> testBuffer = new List<object[]>();
+
+Action<bool> flushTestBuffer = asErrors =>
+{
+    for (int i = 0; i < testBuffer.Count; i++)
+    {
+        object[] d = testBuffer[i];
+        if (asErrors)
+        {
+            Log.LogError(null, code, null, (string)d[0], (int)d[1], (int)d[2], 0, 0, (string)d[3]);
+            loggedStructuredError = true;
+        }
+        else
+        {
+            Log.LogMessage(MessageImportance.High, (string)d[4]);
+        }
+    }
+    testBuffer.Clear();
+};
+
+Action flush = () =>
+{
+    if (!havePending) return;
+    havePending = false;
+    if (pendDefer)
+    {
+        testBuffer.Add(new object[] { pendFile, pendLine, pendCol, pendMsg, pendRaw });
+        return;
+    }
+    // The 10-argument overload: this is what puts file/line/column on the
+    // event, which is what makes Error List navigation work.
+    Log.LogError(null, code, null, pendFile, pendLine, pendCol, 0, 0, pendMsg);
+    loggedStructuredError = true;
+};
+
+Action<string> processLine = raw =>
+{
+    if (raw == null) return;
+    string line = raw.TrimEnd('\r', '\n');
+    if (line.Trim().Length == 0) { flush(); return; }
+
+    // Continuation of the previous diagnostic ("have ..." / "want ...").
+    // Folded into a single line: MSBuild re-prefixes every line of a multi-line
+    // error message with "file(l,c): error CODE:", which would make one
+    // diagnostic look like three in the build output.
+    if (line[0] == '\t' && havePending)
+    {
+        pendMsg = pendMsg + "; " + line.Trim();
+        pendRaw = pendRaw + Environment.NewLine + line;
+        return;
+    }
+
+    string trimmed = line.TrimStart(' ', '\t');
+    bool indented = trimmed.Length != line.Length;
+
+    // "vet: " / "vet.exe: " prefix on go vet's own hard failures.
+    string scan = trimmed;
+    if (scan.StartsWith("vet: ", StringComparison.Ordinal)) scan = scan.Substring(5);
+    else if (scan.StartsWith("vet.exe: ", StringComparison.Ordinal)) scan = scan.Substring(9);
+
+    // Package header - context only, never an error of its own.
+    if (scan.StartsWith("# ", StringComparison.Ordinal))
+    {
+        flush();
+        Log.LogMessage(MessageImportance.High, line);
+        return;
+    }
+
+    // go test status lines drive the "are we inside a failing test?" state and
+    // resolve whatever testing.T output is still awaiting a verdict.
+    if (trimmed.StartsWith("--- FAIL", StringComparison.Ordinal) ||
+        trimmed.StartsWith("=== FAIL", StringComparison.Ordinal))
+    {
+        flush();
+        Log.LogMessage(MessageImportance.High, line);
+        flushTestBuffer(true);
+        inFailingTest = true;
+        return;
+    }
+    if (trimmed.StartsWith("--- ", StringComparison.Ordinal))   // PASS / SKIP / BENCH
+    {
+        flush();
+        Log.LogMessage(MessageImportance.High, line);
+        flushTestBuffer(false);
+        inFailingTest = false;
+        return;
+    }
+    if (trimmed.StartsWith("=== ", StringComparison.Ordinal))   // RUN / PAUSE / CONT / NAME
+    {
+        // Deliberately does NOT resolve the buffer: under -parallel the verdict
+        // for an already-started test can still be several lines away.
+        flush();
+        Log.LogMessage(MessageImportance.High, line);
+        inFailingTest = false;
+        return;
+    }
+    if (trimmed.StartsWith("ok ", StringComparison.Ordinal) ||
+        trimmed.StartsWith("ok\t", StringComparison.Ordinal) ||
+        trimmed.StartsWith("FAIL\t", StringComparison.Ordinal) ||
+        trimmed.StartsWith("?   ", StringComparison.Ordinal) ||
+        trimmed.StartsWith("?\t", StringComparison.Ordinal) ||
+        trimmed == "PASS" || trimmed == "FAIL")
+    {
+        flush();
+        Log.LogMessage(MessageImportance.High, line);
+        inFailingTest = false;
+        return;
+    }
+
+    Match m = diagRegex.Match(scan);
+    if (!m.Success)
+    {
+        flush();
+        Log.LogMessage(MessageImportance.High, line);
+        return;
+    }
+
+    flush();
+
+    // An indented "file.go:N: text" line under `go test` is testing.T output.
+    // t.Logf produces exactly the same shape as t.Errorf, so it may only be
+    // promoted to an error once the enclosing test is known to have failed -
+    // otherwise a passing test's log line would break the build. When the
+    // verdict is already known ("--- FAIL:" first, i.e. non-verbose go test) it
+    // is an error immediately; otherwise it waits in testBuffer.
+    bool defer = isTest && indented && !inFailingTest;
+
+    int ln = 0, cl = 0;
+    int.TryParse(m.Groups["line"].Value, out ln);
+    if (m.Groups["col"].Success) int.TryParse(m.Groups["col"].Value, out cl);
+
+    havePending = true;
+    pendDefer = defer;
+    pendFile = resolveFile(m.Groups["file"].Value);
+    pendLine = ln;
+    pendCol = cl;
+    pendMsg = m.Groups["msg"].Value;
+    pendRaw = line;
+};
+
+// ------------------------------------------------------------------
+// Run the command.
+// ------------------------------------------------------------------
+List<string> stdoutLines = new List<string>();
+List<string> stderrLines = new List<string>();
+int exit = 0;
+bool started = false;
+
+ProcessStartInfo psi = new ProcessStartInfo();
+if (Path.DirectorySeparatorChar == '\\')
+{
+    string comspec = Environment.GetEnvironmentVariable("ComSpec");
+    if (string.IsNullOrEmpty(comspec)) comspec = "cmd.exe";
+    psi.FileName = comspec;
+    // /S + surrounding quotes: cmd strips only the outer pair and passes the
+    // rest through verbatim, so embedded quotes in -ldflags survive.
+    psi.Arguments = "/S /C \"" + Command + "\"";
+}
+else
+{
+    psi.FileName = "/bin/sh";
+    psi.Arguments = "-c \"" + Command.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+}
+psi.WorkingDirectory = workDir;
+psi.UseShellExecute = false;
+psi.CreateNoWindow = true;
+psi.RedirectStandardOutput = true;
+psi.RedirectStandardError = true;
+psi.StandardOutputEncoding = new UTF8Encoding(false);
+psi.StandardErrorEncoding = new UTF8Encoding(false);
+
+if (EnvironmentVariables != null)
+{
+    for (int i = 0; i < EnvironmentVariables.Length; i++)
+    {
+        string entry = EnvironmentVariables[i];
+        if (string.IsNullOrEmpty(entry)) continue;
+        int eq = entry.IndexOf('=');
+        if (eq <= 0) continue;
+        psi.Environment[entry.Substring(0, eq)] = entry.Substring(eq + 1);
+    }
+}
+
+try
+{
+    using (Process proc = new Process())
+    {
+        proc.StartInfo = psi;
+        proc.OutputDataReceived += (sender, e) =>
+        {
+            if (e.Data != null) { lock (stdoutLines) { stdoutLines.Add(e.Data); } }
+        };
+        proc.ErrorDataReceived += (sender, e) =>
+        {
+            if (e.Data != null) { lock (stderrLines) { stderrLines.Add(e.Data); } }
+        };
+        proc.Start();
+        started = true;
+        proc.BeginOutputReadLine();
+        proc.BeginErrorReadLine();
+        proc.WaitForExit();
+        exit = proc.ExitCode;
+    }
+}
+catch (Exception ex)
+{
+    Log.LogError(null, code, null, null, 0, 0, 0, 0,
+        "Orika.NET.Sdk: failed to run \"" + Command + "\": " + ex.Message);
+    exit = started ? exit : -1;
+}
+
+// Each stream is replayed whole so that a diagnostic never gets separated from
+// its tab-indented continuation lines by an interleaved line from the other
+// stream. go build/vet write diagnostics to stderr; go test writes test output
+// to stdout - within a stream the original order is preserved exactly.
+for (int i = 0; i < stderrLines.Count; i++) processLine(stderrLines[i]);
+flush();
+flushTestBuffer(false);
+inFailingTest = false;
+for (int i = 0; i < stdoutLines.Count; i++) processLine(stdoutLines[i]);
+flush();
+flushTestBuffer(false);
+
+ExitCode = exit;
+
+// Only when nothing structured was reported do we fall back to a generic
+// "command failed" error - otherwise the generic message would shadow the real
+// Go diagnostic in the Error List (which is exactly what MSB3073 used to do).
+if (exit != 0 && !loggedStructuredError)
+{
+    Log.LogError(null, code, null, null, 0, 0, 0, 0,
+        "Orika.NET.Sdk: the command \"" + Command + "\" exited with code " +
+        exit.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".");
+}
+
+// Fail the task - and therefore the target - whenever a diagnostic was
+// reported. Written as an early-exit rather than a trailing "return" so that
+// the factory-generated "return !Log.HasLoggedErrors;" that follows this
+// fragment stays reachable (a trailing return here would make it dead code and
+// emit CS0162 on every build).
+if (Log.HasLoggedErrors)
+{
+    return false;
+}
+
+]]></Code>
+    </Task>
+  </UsingTask>
+
+</Project>

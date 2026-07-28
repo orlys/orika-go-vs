@@ -12,6 +12,11 @@
 -->
 <Project>
 
+  <!-- <GoExec>: Exec + a Go diagnostic parser that re-emits file/line/column
+       through Log.LogError's structured overload, so go build / vet / test
+       errors are navigable from the Visual Studio Error List. -->
+  <Import Project="$(MSBuildThisFileDirectory)GoDiagnostics.targets" />
+
   <PropertyGroup>
     <!-- Microsoft.NET.Sdk only defaults LanguageTargets for .cs/.vb/.fsproj, and it
          imports the value immediately, so a .goproj must set it before that import. -->
@@ -113,6 +118,91 @@
   </Target>
 
   <!-- ======================================================================
+       Workspace bootstrap: go.work membership.
+
+       GOWORK is inherited by every subdirectory, so a module created anywhere
+       underneath a directory that already owns a go.work is INSIDE the
+       workspace but is not a MEMBER of it until go.work's "use" block lists
+       it - and the toolchain then refuses to build it outright:
+         main module (x) does not contain package x/<newmodule>
+       That is exactly what the New Project flow produces, so the module is
+       registered here, right after it has been given a go.mod.
+
+       Opt out per project with <GoEnsureWorkspaceMembership>false</...> (for a
+       module that is deliberately kept out of the workspace).
+       ====================================================================== -->
+  <Target Name="GoEnsureWorkspace"
+          Condition="'$(DesignTimeBuild)' != 'true' And '$(GoEnsureWorkspaceMembership)' != 'false'"
+          DependsOnTargets="GoEnsureMod">
+
+    <!-- Cheap and exact pre-guard, so the common "no workspace at all" case
+         costs nothing. The go command resolves GOWORK from the environment
+         variable when it is set - it cannot come from anywhere else, "go env
+         -w GOWORK=..." answers "go: GOWORK cannot be modified" - and otherwise
+         by walking up from the working directory looking for go.work. If
+         neither yields anything there is definitively no workspace, so skip
+         the process launch instead of paying for it on every build. -->
+    <PropertyGroup>
+      <_GoWorkProbe Condition="'$(GOWORK)' != ''">$(GOWORK)</_GoWorkProbe>
+      <_GoWorkProbe Condition="'$(GOWORK)' == ''">$([MSBuild]::GetPathOfFileAbove('go.work', '$(MSBuildProjectDirectory)'))</_GoWorkProbe>
+    </PropertyGroup>
+
+    <!-- Authoritative value: let the toolchain itself say which go.work is in
+         effect rather than trusting the reimplementation above. -->
+    <Exec Condition="'$(_GoWorkProbe)' != '' And '$(_GoWorkProbe)' != 'off'"
+          Command="go env GOWORK"
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          EnvironmentVariables="GOTOOLCHAIN=local"
+          ConsoleToMSBuild="true"
+          StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_GoWorkFile" />
+    </Exec>
+
+    <PropertyGroup>
+      <_GoWorkFile>$(_GoWorkFile.Trim())</_GoWorkFile>
+      <_GoWorkFile Condition="'$(_GoWorkFile)' == 'off' Or !Exists('$(_GoWorkFile)')"></_GoWorkFile>
+      <_GoWorkDir Condition="'$(_GoWorkFile)' != ''">$([System.IO.Path]::GetDirectoryName('$(_GoWorkFile)'))</_GoWorkDir>
+
+      <!-- go.work spells its use paths relative to itself, with forward
+           slashes. MakeRelative returns "." when the project dir IS the
+           workspace dir, which is also how go.work spells that entry. -->
+      <_GoWorkRel Condition="'$(_GoWorkDir)' != ''">$([MSBuild]::MakeRelative('$(_GoWorkDir)', '$(MSBuildProjectDirectory)').Replace('\', '/').TrimEnd('/'))</_GoWorkRel>
+      <_GoWorkRel Condition="'$(_GoWorkDir)' != '' And '$(_GoWorkRel)' == ''">.</_GoWorkRel>
+
+      <!-- Matches the entry in either shape go.work accepts - inside a "use (
+           ... )" block or on a single "use <path>" line - with the optional
+           "./" prefix and the quoting go adds for paths containing spaces.
+           An absolute entry (what "go work use <absolute-path>" leaves behind,
+           and what a hand-written go.work may contain) counts as membership
+           too, so both slash flavours are accepted. Regex.Escape is what keeps
+           a path such as "v1.2" from turning its dots into wildcards. -->
+      <_GoWorkUsePattern Condition="'$(_GoWorkRel)' != ''">(?m)^[ \t]*(use[ \t]+)?"?((\./)?$([System.Text.RegularExpressions.Regex]::Escape('$(_GoWorkRel)'))|$([System.Text.RegularExpressions.Regex]::Escape('$(MSBuildProjectDirectory)'))|$([System.Text.RegularExpressions.Regex]::Escape('$(MSBuildProjectDirectory.Replace('\', '/'))')))"?[ \t]*$</_GoWorkUsePattern>
+
+      <!-- Idempotence guard mirroring the GoEnsureMod pattern above: only
+           touch go.work when the module is genuinely absent, so its mtime does
+           not thrash the incremental build. Evaluated here rather than in the
+           Exec's Condition because MSBuild expands a condition BEFORE parsing
+           it, so a quote anywhere in go.work's text would break the parse. -->
+      <_GoWorkHasUse Condition="'$(_GoWorkDir)' != ''">$([System.Text.RegularExpressions.Regex]::IsMatch($([System.IO.File]::ReadAllText('$(_GoWorkFile)')), '$(_GoWorkUsePattern)'))</_GoWorkHasUse>
+    </PropertyGroup>
+
+    <!-- The RELATIVE path is passed deliberately: "go work use" records the
+         argument as given, so handing it an absolute path bakes a machine
+         specific (and, on Windows, backslash-separated) entry into a file that
+         is normally committed. Run from the workspace directory, the relative
+         form lands as the canonical "./<path>" that go itself writes. -->
+    <Exec Condition="'$(_GoWorkDir)' != '' And '$(_GoWorkHasUse)' != 'true' And Exists('$(MSBuildProjectDirectory)/go.mod')"
+          Command="go work use &quot;$(_GoWorkRel)&quot;"
+          WorkingDirectory="$(_GoWorkDir)"
+          EnvironmentVariables="GOTOOLCHAIN=local"
+          StandardOutputImportance="normal" />
+
+    <Message Importance="normal"
+             Condition="'$(_GoWorkDir)' != '' And '$(_GoWorkHasUse)' != 'true' And Exists('$(MSBuildProjectDirectory)/go.mod')"
+             Text="$(MSBuildProjectName) -&gt; added &quot;$(_GoWorkRel)&quot; to $(_GoWorkFile)" />
+  </Target>
+
+  <!-- ======================================================================
        Shared argument/environment computation for build, vet and test.
        ====================================================================== -->
   <Target Name="GoPrepareBuildSettings">
@@ -166,21 +256,26 @@
        ====================================================================== -->
   <Target Name="GoBuild"
           Condition="'$(DesignTimeBuild)' != 'true'"
-          DependsOnTargets="GoEnsureMod;GoPrepareBuildSettings"
+          DependsOnTargets="GoEnsureMod;GoEnsureWorkspace;GoPrepareBuildSettings"
           Inputs="@(_GoBuildInput)"
           Outputs="$(_GoBuildOutputs)">
     <MakeDir Directories="$(TargetDir);$(IntermediateOutputPath)" />
 
-    <Exec Condition="'$(OutputType)' == 'Exe'"
-          Command="go build $(_GoBuildArgs) -o &quot;$(GoOutputPath)&quot; ."
-          WorkingDirectory="$(MSBuildProjectDirectory)"
-          EnvironmentVariables="@(_GoEnv)" />
+    <!-- GoExec, not Exec: the compiler's "file:line:col: message" lines are
+         re-logged with real file/line/column so they are navigable from the
+         Error List. See GoDiagnostics.targets. -->
+    <GoExec Condition="'$(OutputType)' == 'Exe'"
+            Command="go build $(_GoBuildArgs) -o &quot;$(GoOutputPath)&quot; ."
+            WorkingDirectory="$(MSBuildProjectDirectory)"
+            EnvironmentVariables="@(_GoEnv)"
+            ErrorCode="GOBUILD" />
 
     <!-- Library: compile-check the whole module, no artifact. -->
-    <Exec Condition="'$(OutputType)' != 'Exe'"
-          Command="go build $(_GoBuildArgs) ./..."
-          WorkingDirectory="$(MSBuildProjectDirectory)"
-          EnvironmentVariables="@(_GoEnv)" />
+    <GoExec Condition="'$(OutputType)' != 'Exe'"
+            Command="go build $(_GoBuildArgs) ./..."
+            WorkingDirectory="$(MSBuildProjectDirectory)"
+            EnvironmentVariables="@(_GoEnv)"
+            ErrorCode="GOBUILD" />
 
     <Touch Files="$(_GoBuildStamp)" AlwaysCreate="true" />
     <Message Importance="High" Text="$(MSBuildProjectName) -&gt; $(GoOutputPath)" Condition="'$(OutputType)' == 'Exe'" />
@@ -198,9 +293,10 @@
           AfterTargets="GoBuild"
           Condition="'$(RunGoVet)' == 'true' And '$(DesignTimeBuild)' != 'true'"
           DependsOnTargets="GoPrepareBuildSettings">
-    <Exec Command="go vet ./..."
-          WorkingDirectory="$(MSBuildProjectDirectory)"
-          EnvironmentVariables="@(_GoEnv)" />
+    <GoExec Command="go vet ./..."
+            WorkingDirectory="$(MSBuildProjectDirectory)"
+            EnvironmentVariables="@(_GoEnv)"
+            ErrorCode="GOVET" />
   </Target>
 
   <!-- ======================================================================
@@ -221,10 +317,11 @@
        fails the target, which fails dotnet test. Overrides/supplies the VSTest
        entry point the CLI invokes.
        ====================================================================== -->
-  <Target Name="VSTest" DependsOnTargets="GoEnsureMod;GoPrepareBuildSettings">
-    <Exec Command="go test $(GoTestFlags) ./..."
-          WorkingDirectory="$(MSBuildProjectDirectory)"
-          EnvironmentVariables="@(_GoEnv)" />
+  <Target Name="VSTest" DependsOnTargets="GoEnsureMod;GoEnsureWorkspace;GoPrepareBuildSettings">
+    <GoExec Command="go test $(GoTestFlags) ./..."
+            WorkingDirectory="$(MSBuildProjectDirectory)"
+            EnvironmentVariables="@(_GoEnv)"
+            ErrorCode="GOTEST" />
   </Target>
 
   <!-- ======================================================================
@@ -259,7 +356,7 @@
   </Target>
 
   <PropertyGroup>
-    <GoPublishDependsOn>_GoValidatePublishRid;GoEnsureMod;_GoPreparePublishSettings</GoPublishDependsOn>
+    <GoPublishDependsOn>_GoValidatePublishRid;GoEnsureMod;GoEnsureWorkspace;_GoPreparePublishSettings</GoPublishDependsOn>
   </PropertyGroup>
 
   <Target Name="Publish"
@@ -267,15 +364,17 @@
           DependsOnTargets="$(GoPublishDependsOn)">
     <MakeDir Directories="$(PublishDir)" />
 
-    <Exec Condition="'$(OutputType)' == 'Exe'"
-          Command="go build $(_GoBuildArgs) -o &quot;$(GoPublishOutputPath)&quot; ."
-          WorkingDirectory="$(MSBuildProjectDirectory)"
-          EnvironmentVariables="@(_GoPublishEnv)" />
+    <GoExec Condition="'$(OutputType)' == 'Exe'"
+            Command="go build $(_GoBuildArgs) -o &quot;$(GoPublishOutputPath)&quot; ."
+            WorkingDirectory="$(MSBuildProjectDirectory)"
+            EnvironmentVariables="@(_GoPublishEnv)"
+            ErrorCode="GOBUILD" />
 
-    <Exec Condition="'$(OutputType)' != 'Exe'"
-          Command="go build $(_GoBuildArgs) ./..."
-          WorkingDirectory="$(MSBuildProjectDirectory)"
-          EnvironmentVariables="@(_GoPublishEnv)" />
+    <GoExec Condition="'$(OutputType)' != 'Exe'"
+            Command="go build $(_GoBuildArgs) ./..."
+            WorkingDirectory="$(MSBuildProjectDirectory)"
+            EnvironmentVariables="@(_GoPublishEnv)"
+            ErrorCode="GOBUILD" />
 
     <Message Importance="High" Text="$(MSBuildProjectName) -&gt; $([System.IO.Path]::GetFullPath('$(PublishDir)'))" />
   </Target>
