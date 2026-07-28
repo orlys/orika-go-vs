@@ -54,6 +54,35 @@ func (o *buildOptions) registerBuildFlags(fs *flag.FlagSet) {
 	fs.StringVar(&o.GOARCH, "goarch", "", "target `architecture` (GOARCH); empty means the host default")
 }
 
+// appendGoflags returns the value GOFLAGS should have once flag has been
+// added to the inherited value.
+//
+// GOFLAGS is a space-separated list of flags the go command applies to
+// every invocation, and it is the only channel through which -tags can
+// reach the `go list` subprocess go/packages runs (go/packages exposes no
+// argv for it). Replacing GOFLAGS outright would therefore silently drop
+// whatever the caller's environment already asked for — -mod=vendor,
+// -mod=mod, -trimpath, ... — and make the analyzed file set diverge from
+// the one `go build` compiles, because the build inherits GOFLAGS intact
+// and passes -tags on its own command line.
+//
+// Appending is also the correct way to *override* a flag that is already
+// present: the go command parses GOFLAGS left to right into one flag set,
+// so a repeated flag keeps its last occurrence. Verified with go1.21.5:
+//
+//	GOFLAGS="-tags=taga -tags=tagb" go list -f '{{.GoFiles}}'  ->  [b_tagb.go main.go]
+//	GOFLAGS="-tags=tagb -tags=taga" go list -f '{{.GoFiles}}'  ->  [a_taga.go main.go]
+//
+// so an explicit -tags wins over an inherited one while every other
+// inherited flag survives.
+func appendGoflags(inherited, flag string) string {
+	inherited = strings.TrimSpace(inherited)
+	if inherited == "" {
+		return flag
+	}
+	return inherited + " " + flag
+}
+
 // env builds the environment for the `go list` subprocess go/packages
 // runs: the current environment plus the requested overrides. Later
 // entries win, so the overrides shadow any inherited value.
@@ -66,7 +95,7 @@ func (o buildOptions) env() []string {
 		env = append(env, "GOARCH="+o.GOARCH)
 	}
 	if o.Tags != "" {
-		env = append(env, "GOFLAGS=-tags="+o.Tags)
+		env = append(env, "GOFLAGS="+appendGoflags(os.Getenv("GOFLAGS"), "-tags="+o.Tags))
 	}
 	return env
 }

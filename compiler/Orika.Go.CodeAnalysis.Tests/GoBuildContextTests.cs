@@ -163,4 +163,122 @@ public class GoBuildContextTests
             d.Location.File is not null &&
             d.Location.File.EndsWith("linux_gated.go", StringComparison.OrdinalIgnoreCase));
     }
+
+    /// <summary>
+    /// Build tags reach the analysis sidecar's `go list` through GOFLAGS, because
+    /// golang.org/x/tools/go/packages exposes no command line of its own. Emit, by
+    /// contrast, puts -tags on the `go build` command line and leaves the inherited
+    /// GOFLAGS alone. If the sidecar *replaced* GOFLAGS with its own -tags it would
+    /// silently discard every other flag the environment asked for, and the two would
+    /// disagree about the very same module - which is exactly what
+    /// <see cref="GoBuildContextTests"/> exists to prevent.
+    /// </summary>
+    [Fact]
+    public void GetDiagnostics_WithTags_KeepsInheritedGoflags_SoAnalysisStillAgreesWithEmit()
+    {
+        using var module = new TempGoModule("goflagsmod");
+
+        // A dependency resolved through a local `replace` (nothing is downloaded), then
+        // vendored - and the vendored copy is given a function the real dependency source
+        // does not have. The module's meaning therefore depends on -mod: under vendor mode
+        // it compiles, under -mod=mod the call is undefined.
+        Directory.CreateDirectory(Path.Combine(module.Directory, "depsrc"));
+        module.WriteFile(Path.Combine("depsrc", "go.mod"), "module example.com/dep\n\ngo 1.21\n");
+        module.WriteFile(Path.Combine("depsrc", "dep.go"), "package dep\n\nfunc Base() string { return \"base\" }\n");
+        module.WriteFile(
+            "go.mod",
+            "module goflagsmod\n\ngo 1.21\n\nrequire example.com/dep v0.0.0\n\nreplace example.com/dep => ./depsrc\n");
+        module.WriteFile("main.go", "package main\n\nimport \"example.com/dep\"\n\nfunc main() { println(dep.Base()) }\n");
+
+        var (vendorExit, vendorOutput) = module.RunGo("mod", "vendor");
+        Assert.True(vendorExit == 0, "go mod vendor failed: " + vendorOutput);
+
+        module.WriteFile(
+            Path.Combine("vendor", "example.com", "dep", "dep.go"),
+            "package dep\n\nfunc Base() string { return \"base\" }\n\nfunc VendorOnly() string { return \"vendor\" }\n");
+        module.WriteFile(
+            "main.go",
+            "package main\n\nimport \"example.com/dep\"\n\nfunc main() { println(dep.Base()); println(dep.VendorOnly()) }\n");
+
+        var compilation = GoCompilation.Create(module.Directory);
+
+        // One options object for both calls: whatever they disagree about, it is not this.
+        var options = new GoEmitOptions { Tags = { "orikafeature" } };
+
+        string outputPath = Path.Combine(module.Directory, "out", "app.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+
+        string? savedGoflags = Environment.GetEnvironmentVariable("GOFLAGS");
+        try
+        {
+            // Control: no inherited GOFLAGS. vendor/ exists, so the go command selects
+            // vendor mode by itself, the patched function resolves, and both agree "clean".
+            Environment.SetEnvironmentVariable("GOFLAGS", null);
+            Assert.Empty(compilation.GetDiagnostics(options));
+            Assert.True(
+                compilation.Emit(outputPath, options).Success,
+                "Emit was expected to succeed in the default (vendor) mode.");
+
+            // The real case: the environment asks for -mod=mod, which overrides the vendor
+            // default. Emit inherits GOFLAGS and fails...
+            Environment.SetEnvironmentVariable("GOFLAGS", "-mod=mod");
+
+            var emitResult = compilation.Emit(outputPath, options);
+            Assert.False(emitResult.Success, "Emit was expected to honour the inherited GOFLAGS=-mod=mod.");
+            Assert.Contains(
+                emitResult.Diagnostics,
+                d => d.Message.Contains("undefined: dep.VendorOnly", StringComparison.Ordinal));
+
+            // ...so the analysis must report the same problem. A sidecar that overwrote
+            // GOFLAGS with "-tags=orikafeature" would drop -mod=mod, fall back to vendor
+            // mode and report nothing here.
+            var error = Assert.Single(compilation.GetDiagnostics(options));
+            Assert.Equal("GOTYPE", error.Id);
+            Assert.Contains("undefined: dep.VendorOnly", error.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GOFLAGS", savedGoflags);
+        }
+    }
+
+    /// <summary>
+    /// Merging the requested -tags into the inherited GOFLAGS must still let the explicit
+    /// option win when GOFLAGS already carries a -tags of its own. The go command parses
+    /// GOFLAGS left to right into a single flag set, so the last occurrence of a repeated
+    /// flag is the one that takes effect and appending is an override - this test pins that
+    /// down rather than leaving it as an assumption.
+    /// </summary>
+    [Fact]
+    public void GetDiagnostics_ExplicitTags_OverrideATagsAlreadyPresentInGoflags()
+    {
+        using var module = new TempGoModule("tagoverridemod");
+        module.WriteFile("main.go", PortableMain);
+        string gatedA = module.WriteFile(
+            "a_taga.go",
+            "//go:build orikaa\n\npackage main\n\nfunc fa() int {\n\tvar n int = \"A\"\n\treturn n\n}\n");
+        string gatedB = module.WriteFile(
+            "b_tagb.go",
+            "//go:build orikab\n\npackage main\n\nfunc fb() int {\n\tvar n int = \"B\"\n\treturn n\n}\n");
+
+        var compilation = GoCompilation.Create(module.Directory);
+
+        string? savedGoflags = Environment.GetEnvironmentVariable("GOFLAGS");
+        try
+        {
+            Environment.SetEnvironmentVariable("GOFLAGS", "-tags=orikaa");
+
+            // No explicit tags: the inherited -tags still selects the file set.
+            var inherited = Assert.Single(compilation.GetDiagnostics());
+            Assert.Equal(gatedA, inherited.Location.File);
+
+            // Explicit tags: appended last, therefore the effective ones.
+            var explicitly = Assert.Single(compilation.GetDiagnostics(new GoAnalysisOptions { Tags = { "orikab" } }));
+            Assert.Equal(gatedB, explicitly.Location.File);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GOFLAGS", savedGoflags);
+        }
+    }
 }

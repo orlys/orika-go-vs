@@ -122,6 +122,39 @@ namespace OrikaGo.LanguageService
         /// mid-build); `go build` refreshes go.sum; and `go get` / `go mod tidy` run from a
         /// terminal change go.mod, go.sum and .go files. Without these patterns gopls keeps
         /// serving a stale module graph until the changed file happens to be opened.
+        /// This is the only channel available: VS sends
+        /// <c>Capabilities.Workspace.DidChangeWatchedFiles = new DynamicRegistrationSetting(false)</c>
+        /// in "initialize", so gopls cannot register its own watchers via
+        /// client/registerCapability.
+        /// </para>
+        /// <para>
+        /// The trailing entries are exclusions. The documented syntax is "glob patterns
+        /// following the standard in .gitignore", and VS implements that literally: the
+        /// patterns are handed to <c>IWorkspaceItemFilterService.CreateFileMatcher</c>,
+        /// whose rule parser treats a leading '!' as a negation
+        /// (<c>SingleRuleMatcher.FromGlob</c>: <c>if (span[0] == '!') action = FilterResult.NotMatch;</c>)
+        /// and whose aggregate matcher reverses the rule list and stops at the first hit,
+        /// so the *last* matching pattern wins. Two consequences shape the list below:
+        /// includes must come first, and a negation-only list would match nothing at all
+        /// (an unmatched path yields FilterResult.Unknown, which the matcher reports as
+        /// "no match").
+        /// </para>
+        /// <para>
+        /// The excluded directories mirror the <c>directoryFilters</c> in
+        /// <see cref="InitializationOptions"/>; without them VS forwards changes for trees
+        /// gopls has been told to ignore, which on a large solution is pure noise (the
+        /// SDK writes into bin/ and obj/ on every build). vendor/ is deliberately *not*
+        /// excluded: it is part of the build in vendor mode, so gopls does need to hear
+        /// about it, and it is absent from directoryFilters for the same reason.
+        /// </para>
+        /// <para>
+        /// Two limits worth knowing. Exclusions filter notifications, they do not narrow
+        /// what VS watches - the file-watcher subscription is workspace-wide and the
+        /// patterns are evaluated per event - so the saving is in LSP traffic and gopls
+        /// work, not in OS-level watching. And the only code that reads this property is
+        /// the Open Folder host (<c>OpenFolderServices.OnWorkspaceFileSystemChangedAsync</c>);
+        /// in .sln mode nothing consumes it, so a solution-based workspace gets no watched
+        /// file events either way.
         /// </para>
         /// </summary>
         public IEnumerable<string> FilesToWatch => new[]
@@ -130,6 +163,11 @@ namespace OrikaGo.LanguageService
             "**/go.mod",
             "**/go.sum",
             "**/go.work",
+
+            // Excludes, last-match-wins: these must stay after the includes above.
+            "!**/node_modules/**",
+            "!**/bin/**",
+            "!**/obj/**",
         };
 
         /// <summary>

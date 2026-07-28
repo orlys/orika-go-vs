@@ -173,33 +173,76 @@ int pendCol = 0;
 string pendMsg = null;
 string pendRaw = null;
 bool loggedStructuredError = false;
-bool inFailingTest = false;
 
 // Verdict-pending testing.T output. `go test` (non-verbose) prints
 // "--- FAIL: TestX" BEFORE the test's log lines, but `go test -v` prints the
 // log lines FIRST and the verdict afterwards - and t.Logf and t.Errorf produce
-// byte-identical output. So an indented "file.go:N: text" line seen while no
-// verdict is known is held here and resolved by the next "--- FAIL" (errors)
-// or "--- PASS"/"--- SKIP" (messages).
-// Entry layout: { file, line, column, message, rawLine }.
+// byte-identical output. So an indented "file.go:N: text" line seen while its
+// test's verdict is still unknown has to be held.
+//
+// The hold is PER TEST. Resolving the whole buffer with whichever verdict
+// arrives next is wrong as soon as more than one test is in flight: under
+// t.Parallel() / -parallel, a sibling that logs and PASSES before the failing
+// test reaches its verdict would consume the failure's buffered
+// "file.go:N:" location and downgrade it to plain output - the Error List then
+// gets only the generic "command exited with code 1", with nothing to navigate
+// to. `go test -v` names the owning test on every "=== RUN/PAUSE/CONT/NAME"
+// line, so that name is tracked and stamped on each held entry, and a verdict
+// releases only the entries belonging to the test it names.
+// Entry layout: { file, line, column, message, rawLine, testName }.
 List<object[]> testBuffer = new List<object[]>();
+HashSet<string> failedTests = new HashSet<string>(StringComparer.Ordinal);
+string currentTest = null;
 
-Action<bool> flushTestBuffer = asErrors =>
+// "--- FAIL: TestX/sub (0.00s)" -> verdict + test name.
+Regex verdictRegex = new Regex(
+    @"^---[ \t]+(?<verdict>[A-Za-z]+):[ \t]+(?<name>\S+)",
+    RegexOptions.CultureInvariant);
+// "=== RUN   TestX" / "=== CONT  TestX" / "=== PAUSE TestX" / "=== NAME TestX"
+// (and "=== FAIL: TestX", which some versions emit) -> owner of what follows.
+Regex ownerRegex = new Regex(
+    @"^===[ \t]+(?<action>[A-Za-z]+):?[ \t]+(?<name>\S+)",
+    RegexOptions.CultureInvariant);
+
+Action<object[], bool> emitTestEntry = (d, asError) =>
 {
-    for (int i = 0; i < testBuffer.Count; i++)
+    if (asError)
+    {
+        Log.LogError(null, code, null, (string)d[0], (int)d[1], (int)d[2], 0, 0, (string)d[3]);
+        loggedStructuredError = true;
+    }
+    else
+    {
+        Log.LogMessage(MessageImportance.High, (string)d[4]);
+    }
+};
+
+// A verdict for <name> releases the entries owned by <name>, in order.
+// Entries with no owner (output seen before any test line named one - not
+// something `go test` actually produces, but the parser must not lose them)
+// go with the first verdict to arrive, which is the pre-existing behaviour.
+Action<string, bool> resolveTest = (name, asErrors) =>
+{
+    if (name == null) return;
+    int i = 0;
+    while (i < testBuffer.Count)
     {
         object[] d = testBuffer[i];
-        if (asErrors)
-        {
-            Log.LogError(null, code, null, (string)d[0], (int)d[1], (int)d[2], 0, 0, (string)d[3]);
-            loggedStructuredError = true;
-        }
-        else
-        {
-            Log.LogMessage(MessageImportance.High, (string)d[4]);
-        }
+        string owner = (string)d[5];
+        if (owner != null && !string.Equals(owner, name, StringComparison.Ordinal)) { i++; continue; }
+        testBuffer.RemoveAt(i);
+        emitTestEntry(d, asErrors);
     }
+};
+
+// End of stream. A test that never produced a verdict cannot be shown to have
+// failed, so its held lines are replayed as plain output rather than promoted.
+Action drainTestBuffer = () =>
+{
+    for (int i = 0; i < testBuffer.Count; i++) emitTestEntry(testBuffer[i], false);
     testBuffer.Clear();
+    failedTests.Clear();
+    currentTest = null;
 };
 
 Action flush = () =>
@@ -208,7 +251,15 @@ Action flush = () =>
     havePending = false;
     if (pendDefer)
     {
-        testBuffer.Add(new object[] { pendFile, pendLine, pendCol, pendMsg, pendRaw });
+        // Verdict already in hand (non-verbose `go test`, which prints
+        // "--- FAIL:" before the test's output): straight to the Error List.
+        if (currentTest != null && failedTests.Contains(currentTest))
+        {
+            Log.LogError(null, code, null, pendFile, pendLine, pendCol, 0, 0, pendMsg);
+            loggedStructuredError = true;
+            return;
+        }
+        testBuffer.Add(new object[] { pendFile, pendLine, pendCol, pendMsg, pendRaw, currentTest });
         return;
     }
     // The 10-argument overload: this is what puts file/line/column on the
@@ -250,32 +301,48 @@ Action<string> processLine = raw =>
         return;
     }
 
-    // go test status lines drive the "are we inside a failing test?" state and
-    // resolve whatever testing.T output is still awaiting a verdict.
-    if (trimmed.StartsWith("--- FAIL", StringComparison.Ordinal) ||
-        trimmed.StartsWith("=== FAIL", StringComparison.Ordinal))
+    // go test verdict lines. flush() runs FIRST, while currentTest still names
+    // the test the pending diagnostic came from - the verdict line retargets
+    // ownership only for what follows it.
+    if (trimmed.StartsWith("--- ", StringComparison.Ordinal))   // FAIL / PASS / SKIP / BENCH
     {
         flush();
         Log.LogMessage(MessageImportance.High, line);
-        flushTestBuffer(true);
-        inFailingTest = true;
+        Match mv = verdictRegex.Match(trimmed);
+        if (mv.Success)
+        {
+            string name = mv.Groups["name"].Value;
+            bool failed = mv.Groups["verdict"].Value.Equals("FAIL", StringComparison.OrdinalIgnoreCase);
+            currentTest = name;
+            if (failed) failedTests.Add(name); else failedTests.Remove(name);
+            resolveTest(name, failed);
+        }
         return;
     }
-    if (trimmed.StartsWith("--- ", StringComparison.Ordinal))   // PASS / SKIP / BENCH
-    {
-        flush();
-        Log.LogMessage(MessageImportance.High, line);
-        flushTestBuffer(false);
-        inFailingTest = false;
-        return;
-    }
-    if (trimmed.StartsWith("=== ", StringComparison.Ordinal))   // RUN / PAUSE / CONT / NAME
+    if (trimmed.StartsWith("=== ", StringComparison.Ordinal))   // RUN / PAUSE / CONT / NAME / FAIL
     {
         // Deliberately does NOT resolve the buffer: under -parallel the verdict
-        // for an already-started test can still be several lines away.
+        // for an already-started test can still be several lines away. It does
+        // re-point the OWNER - everything `go test -v` prints after this line
+        // belongs to the test it names, until the next such line.
         flush();
         Log.LogMessage(MessageImportance.High, line);
-        inFailingTest = false;
+        Match mo = ownerRegex.Match(trimmed);
+        if (mo.Success)
+        {
+            string action = mo.Groups["action"].Value;
+            string name = mo.Groups["name"].Value;
+            currentTest = name;
+            if (action.Equals("RUN", StringComparison.OrdinalIgnoreCase))
+            {
+                failedTests.Remove(name);          // -count=N reruns the same name
+            }
+            else if (action.Equals("FAIL", StringComparison.OrdinalIgnoreCase))
+            {
+                failedTests.Add(name);
+                resolveTest(name, true);
+            }
+        }
         return;
     }
     if (trimmed.StartsWith("ok ", StringComparison.Ordinal) ||
@@ -285,9 +352,10 @@ Action<string> processLine = raw =>
         trimmed.StartsWith("?\t", StringComparison.Ordinal) ||
         trimmed == "PASS" || trimmed == "FAIL")
     {
+        // Package-level summary: no test owns what comes after it.
         flush();
         Log.LogMessage(MessageImportance.High, line);
-        inFailingTest = false;
+        currentTest = null;
         return;
     }
 
@@ -303,11 +371,11 @@ Action<string> processLine = raw =>
 
     // An indented "file.go:N: text" line under `go test` is testing.T output.
     // t.Logf produces exactly the same shape as t.Errorf, so it may only be
-    // promoted to an error once the enclosing test is known to have failed -
-    // otherwise a passing test's log line would break the build. When the
-    // verdict is already known ("--- FAIL:" first, i.e. non-verbose go test) it
-    // is an error immediately; otherwise it waits in testBuffer.
-    bool defer = isTest && indented && !inFailingTest;
+    // promoted to an error once its OWN test is known to have failed - otherwise
+    // a passing test's log line would break the build. flush() routes it: an
+    // error immediately when that test's verdict is already in (non-verbose go
+    // test), otherwise into testBuffer tagged with the owning test name.
+    bool defer = isTest && indented;
 
     int ln = 0, cl = 0;
     int.TryParse(m.Groups["line"].Value, out ln);
@@ -399,11 +467,10 @@ catch (Exception ex)
 // to stdout - within a stream the original order is preserved exactly.
 for (int i = 0; i < stderrLines.Count; i++) processLine(stderrLines[i]);
 flush();
-flushTestBuffer(false);
-inFailingTest = false;
+drainTestBuffer();
 for (int i = 0; i < stdoutLines.Count; i++) processLine(stdoutLines[i]);
 flush();
-flushTestBuffer(false);
+drainTestBuffer();
 
 ExitCode = exit;
 

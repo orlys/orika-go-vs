@@ -93,7 +93,7 @@ Build FAILED.
 
 沒有 `MSB3073`，路徑是使用者原始碼的絕對路徑。
 
-> 已知限制：失敗測試中的 `t.Logf` 紀錄行仍會一併升級為錯誤（Go 的輸出無從分辨），它們是該次失敗的上下文。`go test -parallel` 的 verbose 輸出中，多個測試的紀錄行會交錯，判定歸屬只能近似。**錯誤清單中「雙擊即跳到該行」屬於 Visual Studio UI 行為，只能在 IDE 內目視確認**；本文所述皆為可在無介面環境重現的建置輸出。
+> 已知限制：失敗測試中的 `t.Logf` 紀錄行仍會一併升級為錯誤（Go 的輸出無從分辨），它們是該次失敗的上下文。`go test -parallel` 的 verbose 輸出中多個測試的紀錄行會交錯，但歸屬不再靠猜——見下方「MSBuild SDK 的正確性修正」。**錯誤清單中「雙擊即跳到該行」屬於 Visual Studio UI 行為，只能在 IDE 內目視確認**；本文所述皆為可在無介面環境重現的建置輸出。
 
 ## go.work 工作區成員自動註冊
 
@@ -344,3 +344,15 @@ epic/
 驗證方式（`compiler/Orika.Go.CodeAnalysis.Tests/`）：`GoModuleResolutionTests` 以真實的 `go mod tidy`／`go build` 當作基準，要求 `GetDiagnostics()` 與 `go build` 的判斷一致；`GoBuildContextTests` 檢查 `//go:build linux` 與自訂標籤的檔案「預設看不到、指定建置內容才看得到」；`GoColumnUnitTests` 以含 `你好世界`／`名前` 的原始碼確認欄號為 UTF-16 單位（並確認舊的位元組欄號不再解析成功）。上述 11 項新測試在修正前的邊車上全數失敗。
 
 > 邊車現在依賴 `golang.org/x/tools`（見 `compiler/orika-goc/go.mod`／`go.sum`）。由於 `check` 會透過 `go list` 從原始碼型別檢查相依套件，單次檢查約需數秒。
+
+## MSBuild SDK 的正確性修正
+
+外部審查（codex）在 `sdk/Orika.NET.Sdk/Sdk/` 找出三個真實缺陷，皆已修正：
+
+| 缺陷 | 症狀 | 修正 |
+|------|------|------|
+| `go work use` 沒有跨行程鎖（`Sdk.targets`） | 一份 `go.work` 由多個 `.goproj` 共用，`/m` 平行建置下每個專案各自在獨立行程中判斷「不是成員」並同時改寫 `go.work`；`go work use` 是整檔的讀-改-寫，後寫者會**默默覆蓋**先寫者，把別的模組從 `use` 清單中抹掉（所有行程結束代碼仍為 0）。 | 新增行內工作 `<GoWorkUse>`（與 `GoExec` 同樣採 `RoslynCodeTaskFactory`）：以 `go.work` 完整路徑的雜湊命名具名系統 Mutex（`Global\OrikaGo.GoWork.<hash>`，不同工作區互不排隊；無 `SeCreateGlobalPrivilege` 時降級為 `Local\`），**在鎖內重新檢查成員資格**後才執行 `go work use`，並於 `finally` 釋放；`AbandonedMutexException` 視為取得所有權（前一持有者中途死亡，鎖內重讀即可自我修復）。等冪性、「沒有 `go.work` 不動作」、「`GOWORK=off` 不動作」、「不改寫使用者手寫的既有項目」全部維持不變。 |
+| cgo 輸入檔的萬用字元不完整（`Sdk.props`） | `GoNativeCompile` 只涵蓋 `.c`／`.h`／`.s`／`.S`／`.syso`。只改了 `helper.cpp` 時 MSBuild 判定為最新，**`GoBuild` 整個被略過、`go build` 根本沒執行**，留下過期的二進位檔。 | 補齊 `go/build` 實際接受的完整集合：`.c .cc .cpp .cxx .m .mm .h .hh .hpp .hxx .s .S .sx .f .F .for .f90 .swig .swigcxx .syso`。同一份專案的 `@(GoNativeCompile)` 由 4 個項目變成 18 個；只碰 `helper.cpp` 後 `GoBuild` 由「Skipping target … up-to-date」變成確實重新執行並改寫執行檔。 |
+| 測試輸出的判定歸屬錯誤（`GoDiagnostics.targets`） | 待判定的診斷行放在**單一共用緩衝區**，被「下一個抵達的判定」整批解決。`go test -v -parallel=2` 下，若某個平行測試先記錄並 `--- PASS`，失敗測試那筆可導覽的 `file.go:N:` 位置就會被當成一般訊息丟掉，錯誤清單只剩通用的「命令結束代碼非 0」；反之，`--- FAIL` 先抵達時，通過的子測試紀錄行會被誤升為錯誤。 | 改為**依測試名稱歸屬**：追蹤 `=== RUN`／`PAUSE`／`CONT`／`NAME` 所指的擁有者，把它戳記在每筆暫存診斷上，`--- FAIL`／`--- PASS`／`--- SKIP` 只解決**它所指名的那個測試**（含 `TestX/sub` 子測試）的項目；串流結束時仍無判定者維持輸出為訊息。非 verbose 的循序情境（`--- FAIL` 先印）與 `go test` 去掉目錄後的基底檔名回填索引都維持原行為。 |
+
+驗證：`go.work` 競態以存放庫外的測試載具重現——6 個並行 `dotnet build -t:GoEnsureWorkspace` 行程共用一份 `go.work`，修正前（git HEAD 的目標）30 回合中 10 回合有 3 回合掉失模組，修正後 30 回合全數保住 6 個模組與使用者手寫項目，且 `go work edit -json` 皆可解析；真實方案以 `dotnet build epic.slnx -t:Rebuild -m` 從空白 `go.work` 重建，結果與簽入版本逐位元組相同。cgo 萬用字元以 `@(GoNativeCompile)` 傾印與「只碰 `.cpp` 後是否重新建置」比對（**本機沒有安裝 C/C++ 工具鏈，`CGO_ENABLED=1 go build` 會停在 `cgo: C compiler "gcc" not found`，因此驗證的是 MSBuild 的最新性判斷這一段機制，而非實際的 cgo 編譯**）。測試判定歸屬以兩個 `t.Parallel()` 測試（一個先記錄並通過、另一個稍後失敗）驗證，修正後輸出 `…\inner\race_test.go(11): error GOTEST: deliberate failure from the parallel test`，修正前同一情境只得到通用的 `exited with code 1`。

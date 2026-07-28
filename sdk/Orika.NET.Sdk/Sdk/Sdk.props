@@ -79,8 +79,29 @@
                Visible="false" />
 
     <!-- cgo / assembly / prebuilt-object inputs: go build consumes these too, so a
-         change to one must invalidate the build the same way a .go change does. -->
-    <GoNativeCompile Include="**/*.c;**/*.h;**/*.s;**/*.S;**/*.syso"
+         change to one must invalidate the build the same way a .go change does.
+
+         The set is go/build's, not a guess: build.Context.matchFile accepts
+           .c                      -> CFiles
+           .cc  .cpp .cxx          -> CXXFiles
+           .m                      -> MFiles
+           .h   .hh  .hpp .hxx     -> HFiles
+           .f   .F   .for  .f90    -> FFiles
+           .s   .S   .sx           -> SFiles
+           .swig .swigcxx          -> SwigFiles / SwigCXXFiles
+           .syso                   -> SysoFiles
+         Missing an extension here is a correctness bug, not a performance one:
+         "go build" would recompile, but MSBuild never asks it to, so editing
+         only a helper.cpp left the previous binary in place. .mm is listed as
+         well - go/build does not consume it, but Objective-C++ sources sit
+         beside cgo code and over-inclusion can only cost an extra rebuild.
+
+         Both letter cases are listed for .s/.S and .f/.F because those are
+         distinct files on case-sensitive filesystems (linux, macOS). On Windows
+         the two patterns match the same file, which MSBuild then contributes to
+         the item list once - verified by dumping @(GoNativeCompile). -->
+
+    <GoNativeCompile Include="**/*.c;**/*.cc;**/*.cpp;**/*.cxx;**/*.m;**/*.mm;**/*.h;**/*.hh;**/*.hpp;**/*.hxx;**/*.s;**/*.S;**/*.sx;**/*.f;**/*.F;**/*.for;**/*.f90;**/*.swig;**/*.swigcxx;**/*.syso"
                      Exclude="$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder);bin/**;obj/**"
                      Visible="false" />
 

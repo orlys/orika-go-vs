@@ -130,7 +130,241 @@
 
        Opt out per project with <GoEnsureWorkspaceMembership>false</...> (for a
        module that is deliberately kept out of the workspace).
+
+       One go.work is shared by every module under it, so a parallel solution
+       build (/m) runs this target in several processes at once against the SAME
+       file. Read-decide-write must therefore be atomic across processes, which
+       is what <GoWorkUse> below provides; see its comment for why.
        ====================================================================== -->
+
+  <!-- <GoWorkUse>: "go work use <path>", serialized across processes.
+
+       The race it closes: with N .goproj projects sharing one go.work, MSBuild's
+       /m gives each project its own node process. Each independently reads
+       go.work, sees its own module missing, and runs "go work use". "go work
+       use" is read-modify-write on the whole file, so two of them overlapping
+       produce a last-writer-wins result that silently drops the other module -
+       or, if the reader catches the writer mid-flight, a truncated go.work.
+       Neither is recoverable by a rebuild: the next build reads the damaged
+       file and "fixes" only its own entry.
+
+       The lock is a named system Mutex, i.e. a kernel object, because the
+       contenders are separate processes (an in-process lock would not see them)
+       and because the OS releases it if a build is killed mid-write. It is
+       named after the go.work path so that builds of unrelated workspaces never
+       queue behind each other.
+
+       Membership is re-checked INSIDE the lock. That is the actual fix: the
+       "module missing" observation that got us here was made before the lock,
+       so by the time we own it a sibling may already have added us, and the
+       correct action is then to do nothing.
+
+       Inline task via RoslynCodeTaskFactory for the same reason GoExec is one
+       (see GoDiagnostics.targets): it is the only factory that runs under both
+       "dotnet build" and Visual Studio's MSBuild.exe, so the SDK still ships
+       nothing but MSBuild logic. -->
+  <UsingTask TaskName="GoWorkUse"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <!-- Full path of the go.work in effect (already resolved by "go env GOWORK"). -->
+      <GoWorkFile ParameterType="System.String" Required="true" />
+      <!-- Directory holding it; "go work use" is run from here so the recorded
+           entry stays relative. -->
+      <WorkspaceDirectory ParameterType="System.String" Required="true" />
+      <!-- The argument for "go work use", relative to WorkspaceDirectory. -->
+      <UsePath ParameterType="System.String" Required="true" />
+      <!-- Regex proving membership; built in GoEnsureWorkspace so the pattern
+           has exactly one definition. -->
+      <UsePattern ParameterType="System.String" Required="true" />
+      <LockTimeoutSeconds ParameterType="System.Int32" />
+      <!-- True only when this invocation actually wrote to go.work. -->
+      <Added ParameterType="System.Boolean" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.Diagnostics" />
+      <Using Namespace="System.Globalization" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Text" />
+      <Using Namespace="System.Text.RegularExpressions" />
+      <Using Namespace="System.Threading" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+
+Added = false;
+
+string workFile = GoWorkFile;
+try { workFile = Path.GetFullPath(GoWorkFile); }
+catch (Exception) { }
+
+// Scope the lock to this go.work. FNV-1a rather than a crypto hash: the name
+// only has to be stable and well distributed - a collision would merely make
+// two unrelated workspaces share one lock, which costs a little serialization
+// and breaks nothing - and it needs no assembly reference beyond mscorlib,
+// which keeps the inline task compiling identically under MSBuild.exe and
+// "dotnet build". Windows paths are case-insensitive, so fold case there or the
+// same file reached by two spellings would take two different locks.
+string key = workFile;
+if (Path.DirectorySeparatorChar == '\\') key = key.ToUpperInvariant();
+ulong hash = 14695981039346656037UL;
+for (int i = 0; i < key.Length; i++)
+{
+    hash ^= (ulong)key[i];
+    hash *= 1099511628211UL;
+}
+string lockName = "OrikaGo.GoWork." + hash.ToString("x16", CultureInfo.InvariantCulture);
+
+int timeoutSeconds = LockTimeoutSeconds > 0 ? LockTimeoutSeconds : 120;
+
+// "Global\": the contenders can live in different logon sessions (a VS build
+// and a CLI build, or a build service). Creating a Global kernel object needs
+// SeCreateGlobalPrivilege, which a plain interactive account may not hold, so
+// degrade to the session-local namespace, and finally to no lock at all -
+// which is exactly the unsynchronized behaviour this task replaces, never
+// worse.
+Mutex mutex = null;
+bool createdNew;
+try { mutex = new Mutex(false, "Global\\" + lockName, out createdNew); }
+catch (Exception) { mutex = null; }
+if (mutex == null)
+{
+    try { mutex = new Mutex(false, "Local\\" + lockName, out createdNew); }
+    catch (Exception) { mutex = null; }
+}
+if (mutex == null)
+{
+    Log.LogMessage(MessageImportance.Low,
+        "Orika.NET.Sdk: no cross-process lock available for \"" + workFile + "\"; proceeding unsynchronized.");
+}
+
+bool held = false;
+try
+{
+    if (mutex != null)
+    {
+        try
+        {
+            held = mutex.WaitOne(TimeSpan.FromSeconds(timeoutSeconds));
+        }
+        catch (AbandonedMutexException)
+        {
+            // A previous owner exited without releasing (build killed mid-write).
+            // WaitOne still transferred ownership to us, so we DO hold it. The
+            // in-lock re-read below is what makes the half-finished predecessor
+            // harmless: we look at the file as it actually is now.
+            held = true;
+        }
+        if (!held)
+        {
+            Log.LogMessage(MessageImportance.Normal,
+                "Orika.NET.Sdk: timed out after " + timeoutSeconds.ToString(CultureInfo.InvariantCulture) +
+                "s waiting for the \"" + workFile + "\" workspace lock; proceeding without it.");
+        }
+    }
+
+    // Re-check membership under the lock. FileShare.ReadWrite|Delete: a sibling
+    // may legitimately be rewriting go.work when the lock could not be taken,
+    // and a sharing violation here must not fail the build.
+    bool isMember = false;
+    try
+    {
+        string text;
+        using (FileStream fs = new FileStream(workFile, FileMode.Open, FileAccess.Read,
+                                              FileShare.ReadWrite | FileShare.Delete))
+        using (StreamReader reader = new StreamReader(fs, new UTF8Encoding(false), true))
+        {
+            text = reader.ReadToEnd();
+        }
+        isMember = Regex.IsMatch(text, UsePattern, RegexOptions.CultureInvariant);
+    }
+    catch (Exception ex)
+    {
+        // Unreadable go.work: fall through and let "go work use" decide. It
+        // rewrites an existing entry in place rather than duplicating it, so a
+        // false negative here is safe.
+        Log.LogMessage(MessageImportance.Low,
+            "Orika.NET.Sdk: could not test membership in \"" + workFile + "\" (" + ex.Message + "); running \"go work use\" anyway.");
+    }
+
+    if (isMember)
+    {
+        // Idempotent: leave go.work's mtime alone so it does not thrash the
+        // incremental build of every module in the workspace.
+        Log.LogMessage(MessageImportance.Low,
+            "Orika.NET.Sdk: \"" + UsePath + "\" is already used by \"" + workFile + "\".");
+    }
+    else
+    {
+        ProcessStartInfo psi = new ProcessStartInfo();
+        psi.FileName = "go";
+        psi.Arguments = "work use \"" + UsePath + "\"";
+        psi.WorkingDirectory = WorkspaceDirectory;
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        // Editing go.work must never require the toolchain go.work names.
+        psi.Environment["GOTOOLCHAIN"] = "local";
+
+        StringBuilder output = new StringBuilder();
+        int exit = -1;
+        try
+        {
+            using (Process proc = new Process())
+            {
+                proc.StartInfo = psi;
+                proc.OutputDataReceived += (sender, e) =>
+                {
+                    if (e.Data != null) { lock (output) { output.AppendLine(e.Data); } }
+                };
+                proc.ErrorDataReceived += (sender, e) =>
+                {
+                    if (e.Data != null) { lock (output) { output.AppendLine(e.Data); } }
+                };
+                proc.Start();
+                proc.BeginOutputReadLine();
+                proc.BeginErrorReadLine();
+                proc.WaitForExit();
+                exit = proc.ExitCode;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogError("Orika.NET.Sdk: failed to run \"go work use " + UsePath + "\" in \"" +
+                         WorkspaceDirectory + "\": " + ex.Message);
+            return false;
+        }
+
+        string outText = output.ToString().TrimEnd();
+        if (outText.Length > 0) Log.LogMessage(MessageImportance.Normal, outText);
+
+        if (exit != 0)
+        {
+            Log.LogError("Orika.NET.Sdk: \"go work use " + UsePath + "\" in \"" + WorkspaceDirectory +
+                         "\" exited with code " + exit.ToString(CultureInfo.InvariantCulture) +
+                         (outText.Length > 0 ? ": " + outText : "."));
+            return false;
+        }
+
+        Added = true;
+    }
+}
+finally
+{
+    if (mutex != null)
+    {
+        if (held)
+        {
+            try { mutex.ReleaseMutex(); }
+            catch (Exception) { }
+        }
+        mutex.Dispose();
+    }
+}
+
+]]></Code>
+    </Task>
+  </UsingTask>
   <Target Name="GoEnsureWorkspace"
           Condition="'$(DesignTimeBuild)' != 'true' And '$(GoEnsureWorkspaceMembership)' != 'false'"
           DependsOnTargets="GoEnsureMod">
@@ -177,28 +411,30 @@
            too, so both slash flavours are accepted. Regex.Escape is what keeps
            a path such as "v1.2" from turning its dots into wildcards. -->
       <_GoWorkUsePattern Condition="'$(_GoWorkRel)' != ''">(?m)^[ \t]*(use[ \t]+)?"?((\./)?$([System.Text.RegularExpressions.Regex]::Escape('$(_GoWorkRel)'))|$([System.Text.RegularExpressions.Regex]::Escape('$(MSBuildProjectDirectory)'))|$([System.Text.RegularExpressions.Regex]::Escape('$(MSBuildProjectDirectory.Replace('\', '/'))')))"?[ \t]*$</_GoWorkUsePattern>
-
-      <!-- Idempotence guard mirroring the GoEnsureMod pattern above: only
-           touch go.work when the module is genuinely absent, so its mtime does
-           not thrash the incremental build. Evaluated here rather than in the
-           Exec's Condition because MSBuild expands a condition BEFORE parsing
-           it, so a quote anywhere in go.work's text would break the parse. -->
-      <_GoWorkHasUse Condition="'$(_GoWorkDir)' != ''">$([System.Text.RegularExpressions.Regex]::IsMatch($([System.IO.File]::ReadAllText('$(_GoWorkFile)')), '$(_GoWorkUsePattern)'))</_GoWorkHasUse>
     </PropertyGroup>
 
-    <!-- The RELATIVE path is passed deliberately: "go work use" records the
+    <!-- The membership test that used to live here - a Regex.IsMatch over
+         File.ReadAllText - now runs inside GoWorkUse instead. It has to: a
+         decision taken during evaluation is already stale by the time the write
+         happens, which is precisely the race being fixed. Testing it twice would
+         also open a second, unsynchronized read window onto a file a sibling
+         build may be rewriting.
+
+         The RELATIVE path is passed deliberately: "go work use" records the
          argument as given, so handing it an absolute path bakes a machine
          specific (and, on Windows, backslash-separated) entry into a file that
          is normally committed. Run from the workspace directory, the relative
          form lands as the canonical "./<path>" that go itself writes. -->
-    <Exec Condition="'$(_GoWorkDir)' != '' And '$(_GoWorkHasUse)' != 'true' And Exists('$(MSBuildProjectDirectory)/go.mod')"
-          Command="go work use &quot;$(_GoWorkRel)&quot;"
-          WorkingDirectory="$(_GoWorkDir)"
-          EnvironmentVariables="GOTOOLCHAIN=local"
-          StandardOutputImportance="normal" />
+    <GoWorkUse Condition="'$(_GoWorkDir)' != '' And Exists('$(MSBuildProjectDirectory)/go.mod')"
+               GoWorkFile="$(_GoWorkFile)"
+               WorkspaceDirectory="$(_GoWorkDir)"
+               UsePath="$(_GoWorkRel)"
+               UsePattern="$(_GoWorkUsePattern)">
+      <Output TaskParameter="Added" PropertyName="_GoWorkAdded" />
+    </GoWorkUse>
 
     <Message Importance="normal"
-             Condition="'$(_GoWorkDir)' != '' And '$(_GoWorkHasUse)' != 'true' And Exists('$(MSBuildProjectDirectory)/go.mod')"
+             Condition="'$(_GoWorkAdded)' == 'true'"
              Text="$(MSBuildProjectName) -&gt; added &quot;$(_GoWorkRel)&quot; to $(_GoWorkFile)" />
   </Target>
 
