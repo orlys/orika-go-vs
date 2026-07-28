@@ -78,6 +78,19 @@
                Exclude="$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder);bin/**;obj/**"
                Visible="false" />
 
+    <!-- cgo / assembly / prebuilt-object inputs: go build consumes these too, so a
+         change to one must invalidate the build the same way a .go change does. -->
+    <GoNativeCompile Include="**/*.c;**/*.h;**/*.s;**/*.S;**/*.syso"
+                     Exclude="$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder);bin/**;obj/**"
+                     Visible="false" />
+
+    <!-- Extension point for inputs the SDK cannot infer - most importantly //go:embed
+         assets, whose paths only the source code knows:
+           <ItemGroup><GoBuildInput Include="assets/**" /></ItemGroup> -->
+  </ItemGroup>
+
+  <ItemGroup>
+
     <!-- go.mod / go.sum are picked up by the default None glob when it is enabled.
          Keep them visible in Solution Explorer even if a user disables that glob. -->
     <None Include="go.mod"

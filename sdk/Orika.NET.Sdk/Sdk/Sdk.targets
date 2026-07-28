@@ -82,6 +82,8 @@
        added when they exist so a missing go.sum does not force perpetual rebuilds. -->
   <ItemGroup>
     <_GoBuildInput Include="@(GoCompile)" />
+    <_GoBuildInput Include="@(GoNativeCompile)" />
+    <_GoBuildInput Include="@(GoBuildInput)" />
     <_GoBuildInput Include="go.mod" Condition="Exists('$(MSBuildProjectDirectory)/go.mod')" />
     <_GoBuildInput Include="go.sum" Condition="Exists('$(MSBuildProjectDirectory)/go.sum')" />
     <_GoBuildInput Include="$(MSBuildProjectFullPath)" />
@@ -143,8 +145,19 @@
                       Lines="$(_GoBuildArgs);@(_GoEnv)"
                       Overwrite="true"
                       WriteOnlyWhenDifferent="true" />
+
+    <!-- Persist the input SET as well. Inputs/Outputs only compare timestamps of
+         files that still exist, so DELETING a source file would otherwise leave a
+         stale binary: the file vanishes from Inputs and nothing looks out of date.
+         Rewriting this list on any set change makes it newer than the output. -->
+    <WriteLinesToFile File="$(IntermediateOutputPath)go.build.inputs"
+                      Lines="@(_GoBuildInput->'%(FullPath)')"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+
     <ItemGroup>
       <_GoBuildInput Include="$(IntermediateOutputPath)go.build.args" />
+      <_GoBuildInput Include="$(IntermediateOutputPath)go.build.inputs" />
     </ItemGroup>
   </Target>
 
@@ -198,7 +211,9 @@
        to cover cross-OS GoOS builds.
        ====================================================================== -->
   <Target Name="GoClean" AfterTargets="CoreClean">
-    <Delete Files="$(TargetDir)$(AssemblyName).exe;$(TargetDir)$(AssemblyName);$(_GoBuildStamp)" />
+    <!-- $(GoOutputPath) is listed explicitly: a project that overrides it writes
+         outside $(TargetDir), and clean must still remove what build produced. -->
+    <Delete Files="$(GoOutputPath);$(TargetDir)$(AssemblyName).exe;$(TargetDir)$(AssemblyName);$(_GoBuildStamp)" />
   </Target>
 
   <!-- ======================================================================
