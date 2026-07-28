@@ -37,15 +37,39 @@ public sealed partial class GoCompilation
     }
 
     /// <summary>
-    /// 對整個模組執行 go/types 型別檢查（<c>orika-goc check</c>）並傳回診斷。
+    /// 以預設建置內容（目前的 <c>GOOS</c>／<c>GOARCH</c>、無額外標籤）對整個模組執行型別檢查
+    /// （<c>orika-goc check</c>）並傳回診斷。
     /// </summary>
     /// <returns>唯讀的診斷清單（識別碼 <c>GOTYPE</c>）；模組健全時為空清單。</returns>
     /// <exception cref="OrikaGocNotFoundException">找不到 orika-goc sidecar。</exception>
     /// <exception cref="InvalidOperationException">sidecar 發生基礎架構錯誤（非零結束代碼或輸出無法解析）。</exception>
-    public IReadOnlyList<GoDiagnostic> GetDiagnostics()
+    public IReadOnlyList<GoDiagnostic> GetDiagnostics() => GetDiagnostics(null);
+
+    /// <summary>
+    /// 在指定的建置內容下對整個模組執行型別檢查（<c>orika-goc check</c>）並傳回診斷。
+    /// <para>
+    /// 型別檢查透過 <c>go list</c>（golang.org/x/tools/go/packages）載入套件，因此模組相依套件、
+    /// go.work 工作區與 vendor 目錄的解析方式與 <c>go build</c> 完全一致。
+    /// </para>
+    /// <para>
+    /// 傳入與 <see cref="Emit(string, GoEmitOptions?)"/> 相同的選項，可確保檢查的檔案集合
+    /// 與實際建置的檔案集合相同（例如 <c>//go:build linux</c> 的檔案）。
+    /// </para>
+    /// </summary>
+    /// <param name="options">
+    /// 建置內容選項（<see cref="GoAnalysisOptions.OS"/>／<see cref="GoAnalysisOptions.Arch"/>／
+    /// <see cref="GoAnalysisOptions.Tags"/>）。<see langword="null"/> 表示使用預設建置內容。
+    /// </param>
+    /// <returns>唯讀的診斷清單（識別碼 <c>GOTYPE</c>）；模組健全時為空清單。</returns>
+    /// <exception cref="OrikaGocNotFoundException">找不到 orika-goc sidecar。</exception>
+    /// <exception cref="InvalidOperationException">sidecar 發生基礎架構錯誤（非零結束代碼或輸出無法解析）。</exception>
+    public IReadOnlyList<GoDiagnostic> GetDiagnostics(GoAnalysisOptions? options)
     {
         var toolPath = OrikaGoToolResolver.Resolve();
-        var stdout = GocInvoker.Invoke(toolPath, new[] { "check", ModuleDirectory });
+        var arguments = new List<string> { "check", ModuleDirectory };
+        options?.AppendSidecarArguments(arguments);
+
+        var stdout = GocInvoker.Invoke(toolPath, arguments);
         var dto = Protocol.Deserialize<CheckResultDto>(stdout, "orika-goc check");
 
         if (dto.Diagnostics is null || dto.Diagnostics.Count == 0)
@@ -71,9 +95,11 @@ public sealed partial class GoCompilation
     /// </summary>
     /// <param name="outputPath">輸出檔路徑（<c>go build -o</c> 的引數）。</param>
     /// <param name="options">
-    /// 建置選項：<see cref="GoEmitOptions.OS"/>／<see cref="GoEmitOptions.Arch"/> 對應
-    /// <c>GOOS</c>／<c>GOARCH</c> 環境變數，另支援 <c>-tags</c> 與 <c>-trimpath</c>。
+    /// 建置選項：<see cref="GoAnalysisOptions.OS"/>／<see cref="GoAnalysisOptions.Arch"/> 對應
+    /// <c>GOOS</c>／<c>GOARCH</c> 環境變數，另支援 <c>-tags</c>（<see cref="GoAnalysisOptions.Tags"/>）
+    /// 與 <c>-trimpath</c>（<see cref="GoEmitOptions.TrimPath"/>）。
     /// <see langword="null"/> 表示全部使用預設值。
+    /// 同一個實體也可以傳給 <see cref="GetDiagnostics(GoAnalysisOptions?)"/>，讓檢查與建置的檔案集合一致。
     /// </param>
     /// <returns>
     /// 建置結果。建置錯誤（<c>go build</c> 結束代碼非零）不擲出例外，而是化為
@@ -147,10 +173,22 @@ public sealed partial class GoCompilation
     }
 
     /// <summary>
-    /// 取得此模組的語意模型（符號查詢由 <c>orika-goc symbol</c> 支援）。
+    /// 以預設建置內容取得此模組的語意模型（符號查詢由 <c>orika-goc symbol</c> 支援）。
     /// </summary>
     /// <returns>此模組的 <see cref="GoSemanticModel"/>。</returns>
-    public GoSemanticModel GetSemanticModel() => new(ModuleDirectory);
+    public GoSemanticModel GetSemanticModel() => GetSemanticModel(null);
+
+    /// <summary>
+    /// 在指定的建置內容下取得此模組的語意模型。
+    /// 選項會決定符號查詢時哪些檔案屬於該套件（<c>GOOS</c>／<c>GOARCH</c>／建置標籤）。
+    /// </summary>
+    /// <param name="options">
+    /// 建置內容選項；<see langword="null"/> 表示使用預設建置內容。
+    /// 與 <see cref="GetDiagnostics(GoAnalysisOptions?)"/> 及 <see cref="Emit(string, GoEmitOptions?)"/>
+    /// 使用同一組選項即可保證三者看到相同的檔案集合。
+    /// </param>
+    /// <returns>此模組的 <see cref="GoSemanticModel"/>。</returns>
+    public GoSemanticModel GetSemanticModel(GoAnalysisOptions? options) => new(ModuleDirectory, options);
 
     private static GoDiagnosticSeverity MapSeverity(string? severity)
         => severity?.ToLowerInvariant() switch

@@ -56,6 +56,46 @@ internal sealed class TempGoModule : IDisposable
         return path;
     }
 
+    /// <summary>
+    /// Runs the real <c>go</c> command inside this module and returns its exit code and
+    /// combined output. Used to establish the ground truth a test compares against:
+    /// "go build accepts this module" is the yardstick GetDiagnostics must agree with.
+    /// </summary>
+    public (int ExitCode, string Output) RunGo(params string[] args)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "go",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = Directory,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
+        };
+
+        foreach (string arg in args)
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to start 'go'. Is the Go toolchain on PATH?");
+
+        Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderr = process.StandardError.ReadToEndAsync();
+
+        if (!process.WaitForExit(300_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw new TimeoutException($"'go {string.Join(' ', args)}' did not exit within 300 s.");
+        }
+
+        Task.WaitAll(stdout, stderr);
+        return (process.ExitCode, (stdout.Result + stderr.Result).Trim());
+    }
+
     public void Dispose()
     {
         try

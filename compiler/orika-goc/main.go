@@ -15,6 +15,18 @@
 // as errors/diagnostics), not a tool failure. A nonzero exit code means an
 // infrastructure error (unreadable input, bad arguments, ...), reported on
 // stderr.
+//
+// check and symbol are module-aware: they load packages through
+// golang.org/x/tools/go/packages, i.e. through the real `go list`, so
+// external dependencies, go.work workspaces and vendor directories
+// resolve exactly as they do for `go build`. Both accept -tags, -goos and
+// -goarch so that the file set being analyzed can be made identical to
+// the one a given build would compile.
+//
+// All columns in the protocol — both those reported and the one accepted
+// by symbol — are 1-based and counted in UTF-16 code units, matching what
+// .NET and Visual Studio use. (go/token itself counts bytes; the
+// conversion happens at this boundary. Byte offsets stay byte offsets.)
 package main
 
 import (
@@ -66,12 +78,20 @@ usage:
   orika-goc parse <file.go> [-pretty]         print the go/parser AST as JSON
   orika-goc parse - [--path <name>]           same, reading source from stdin
   orika-goc parse --expr "<src>"              parse a single expression
-  orika-goc check <moduleDir>                 type-check a module with go/types
-  orika-goc symbol <file.go> <line> <col> [-dir <moduleDir>]
+  orika-goc check <moduleDir> [build flags]   type-check a module (go/packages)
+  orika-goc symbol <file.go> <line> <col> [-dir <moduleDir>] [build flags]
                                               symbol info at a 1-based position
+
+build flags (check, symbol) select the build context, exactly as for go build:
+  -tags <list>    comma-separated build tags
+  -goos <os>      target GOOS (default: host)
+  -goarch <arch>  target GOARCH (default: host)
 
 All commands print JSON on stdout and exit 0 even when the analyzed source
 contains errors; a nonzero exit reports an infrastructure failure on stderr.
+
+Columns are 1-based and counted in UTF-16 code units (as .NET and Visual
+Studio count them), not in bytes; offsets are byte offsets.
 `
 
 func usage(w io.Writer) {

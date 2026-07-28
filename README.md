@@ -118,7 +118,7 @@ dotnet new go-lib -n MyLib -o MyLib
 
 - **`compiler/orika-goc/`** — Go 邊車（sidecar）CLI，本身就是一個 `.goproj`（自我實踐 Orika.NET.Sdk）。以 `go/parser`、`go/types` 實作 `parse` / `check` / `symbol` 三類命令，全部輸出 JSON；即使原始碼有錯誤也回傳結束代碼 0（僅基礎設施錯誤回傳非零）。
 - **`compiler/Orika.Go.CodeAnalysis/`** — net10.0 類別庫，透過邊車提供 `GoSyntaxTree`（語法樹）、`GoCompilation`（診斷與 `Emit`，實際執行 `go build -o`）、`GoSemanticModel`（語意查詢）。
-- **`compiler/Orika.Go.CodeAnalysis.Tests/`** — xUnit 測試（`dotnet test`；11 項全數通過）。
+- **`compiler/Orika.Go.CodeAnalysis.Tests/`** — xUnit 測試（`dotnet test`；23 項全數通過）。
 
 邊車的尋找順序：明確路徑引數 > `ORIKA_GOC` 環境變數 > 與 `Orika.Go.CodeAnalysis` 組件相鄰 > `PATH`。先建置邊車並設定環境變數即可：
 
@@ -153,7 +153,7 @@ var result = compilation.Emit(@"D:\out\tool-linux",
 Console.WriteLine(result.Success);
 ```
 
-診斷代碼：`GOPARSE`（語法錯誤）、`GOTYPE`（型別檢查錯誤）、`GOBUILD`（`go build` 失敗）。位置皆為 1-based 行／欄。
+診斷代碼：`GOPARSE`（語法錯誤）、`GOTYPE`（型別檢查錯誤）、`GOBUILD`（`go build` 失敗）。位置皆為 1-based 行／欄；**欄號的單位是 UTF-16 字碼單位**（詳見下方「編譯器平台的正確性修正」）。
 
 ## 專案結構
 
@@ -181,3 +181,17 @@ epic/
 - **方案總管**：VSIX 內的 `OrikaGoImages.imagemanifest` 向 VS 影像服務註冊 `GoProjectNode` 與 `GoFileNode` 兩組圖示（PNG 以 WPF 元件資源形式內嵌於 `OrikaGo.LanguageService.dll`），再由 `GoProjectTreeIconProvider`（`IProjectTreePropertiesProvider`，`[Order(1000)]`）套用到專案根節點與 `.go` 檔案節點。
 - **OrikaGo 專案能力（ProjectCapability）**：`Orika.NET.Sdk` 的 `Sdk.props` 對每個 `.goproj` 專案宣告 `<ProjectCapability Include="OrikaGo" />`，VSIX 的 MEF 匯出即以 `[AppliesTo("OrikaGo")]` 只作用於 Go 專案。
 - **注意**：更新範本或 VSIX 後需**重新啟動 Visual Studio**（範本快取與 MEF／影像庫快取須重建）才會看到新圖示。
+
+## 編譯器平台的正確性修正
+
+外部審查（codex）在 `compiler/` 找出三個真實缺陷，皆已修正並補上測試（測試總數 11 → 23）：
+
+| 缺陷 | 症狀 | 修正 |
+|------|------|------|
+| 型別檢查不認識 Go 模組 | 邊車以 `go/importer` 的 source importer 檢查，不理解 `go.mod`／模組快取／`go.work`。匯入外部相依（例如 `github.com/google/uuid`）的模組 `go build` 成功，`GetDiagnostics()` 卻回報假的 `could not import ...`。 | 改用 `golang.org/x/tools/go/packages`（`packages.Load`，內部驅動真正的 `go list`），模組相依、工作區與 `vendor` 的解析方式與 `go build` 完全一致。JSON 協定形狀不變，「原始碼錯誤是資料（結束代碼 0）、僅基礎設施失敗回傳非零」的規則也不變。 |
+| 檢查與建置看的檔案集合可能不同 | `Emit` 接受 `Tags`／`OS`／`Arch`，但 `GetDiagnostics()` 沒有對應選項，邊車固定以 `build.Default` 檢查。於是 `//go:build linux` 的程式碼在 Windows 上完全檢查不到，卻會被 `Emit(OS = "linux")` 編譯。 | 邊車的 `check`／`symbol` 新增 `-tags`／`-goos`／`-goarch`（透過 `packages.Config.Env` 設定 `GOOS`／`GOARCH`／`GOFLAGS=-tags=…`）。C# 端新增 `GoAnalysisOptions`，並讓 `GoEmitOptions` 由它衍生，因此**同一個選項物件**可同時交給 `GetDiagnostics(options)`、`GetSemanticModel(options)` 與 `Emit(path, options)`。無參數多載維持原樣。 |
+| 欄號單位與編輯器不一致 | Go 的 `token.Position.Column` 是**行內位元組數**，而 .NET／Visual Studio／LSP 使用 **UTF-16 字碼單位**。含非 ASCII 字元的行（例如 `fmt.Println("你好世界", value)`）中，`GetSymbolAt` 以 VS 回報的欄號查詢會得到 `null`。 | 在邊車的協定邊界做轉換：輸出位置時位元組欄 → UTF-16 欄，`symbol` 接受位置時 UTF-16 欄 → 位元組欄（實際讀取該行的原始位元組換算）。`parse`、`check`、`symbol` 三個命令一致。`offset` 仍維持為位元組位移。C# 端的 XML 文件已明確標示單位。 |
+
+驗證方式（`compiler/Orika.Go.CodeAnalysis.Tests/`）：`GoModuleResolutionTests` 以真實的 `go mod tidy`／`go build` 當作基準，要求 `GetDiagnostics()` 與 `go build` 的判斷一致；`GoBuildContextTests` 檢查 `//go:build linux` 與自訂標籤的檔案「預設看不到、指定建置內容才看得到」；`GoColumnUnitTests` 以含 `你好世界`／`名前` 的原始碼確認欄號為 UTF-16 單位（並確認舊的位元組欄號不再解析成功）。上述 11 項新測試在修正前的邊車上全數失敗。
+
+> 邊車現在依賴 `golang.org/x/tools`（見 `compiler/orika-goc/go.mod`／`go.sum`）。由於 `check` 會透過 `go list` 從原始碼型別檢查相依套件，單次檢查約需數秒。

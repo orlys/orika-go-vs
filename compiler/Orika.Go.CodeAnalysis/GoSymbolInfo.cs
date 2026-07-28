@@ -29,7 +29,9 @@ public sealed class GoSymbolInfo
     /// <summary>取得符號的型別字串（go/types 的 <c>Type.String()</c>）。</summary>
     public string Type { get; }
 
-    /// <summary>取得符號宣告處的位置（檔案／行／欄）；不明時為 <see langword="null"/>。</summary>
+    /// <summary>
+    /// 取得符號宣告處的位置（檔案／行／欄，欄號為 UTF-16 字碼單位）；不明時為 <see langword="null"/>。
+    /// </summary>
     public GoLocation? DeclaredAt { get; }
 
     /// <summary>以 <c>kind name: type</c> 形式傳回符號的文字表示。</summary>

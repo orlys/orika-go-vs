@@ -10,8 +10,8 @@ public sealed class GoSyntaxNode
     /// 建立語法節點。
     /// </summary>
     /// <param name="kind">go/ast 節點型別名稱。</param>
-    /// <param name="start">節點起始位置（1-based 行／欄）。</param>
-    /// <param name="end">節點結束位置（1-based 行／欄）。</param>
+    /// <param name="start">節點起始位置（1-based 行／欄，欄號為 UTF-16 字碼單位）。</param>
+    /// <param name="end">節點結束位置（1-based 行／欄，欄號為 UTF-16 字碼單位）。</param>
     /// <param name="text">節點的 token 文字；僅 <c>Ident</c> 與 <c>BasicLit</c> 有值，其餘為空字串。</param>
     /// <param name="children">依原始碼順序排列的子節點。</param>
     public GoSyntaxNode(string kind, GoLocation start, GoLocation end, string text, IReadOnlyList<GoSyntaxNode> children)

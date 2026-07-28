@@ -12,7 +12,9 @@ import (
 	"reflect"
 )
 
-// position is the pos/end payload of a JSON AST node (1-based line/col).
+// position is the pos/end payload of a JSON AST node: a 1-based line, a
+// 1-based column counted in UTF-16 code units (see columns.go), and the
+// byte offset from the start of the file.
 type position struct {
 	Line   int `json:"line"`
 	Col    int `json:"col"`
@@ -61,6 +63,10 @@ func cmdParse(args []string) int {
 
 	fset := token.NewFileSet()
 	mode := parser.ParseComments | parser.AllErrors | parser.SkipObjectResolution
+	// Positions leave the sidecar with UTF-16 columns; the index holds the
+	// bytes needed to convert them (registered explicitly for input that
+	// never hits the disk, read on demand for a file argument).
+	lines := newLineIndex()
 
 	var (
 		root ast.Node
@@ -76,6 +82,7 @@ func cmdParse(args []string) int {
 		if name == "" {
 			name = "<expr>"
 		}
+		lines.addSource(name, []byte(*expr))
 		var e ast.Expr
 		e, err = parser.ParseExprFrom(fset, name, []byte(*expr), parser.AllErrors)
 		if e != nil {
@@ -90,6 +97,7 @@ func cmdParse(args []string) int {
 		if name == "" {
 			name = "<source>"
 		}
+		lines.addSource(name, src)
 		var f *ast.File
 		f, err = parser.ParseFile(fset, name, src, mode)
 		if f != nil {
@@ -114,22 +122,26 @@ func cmdParse(args []string) int {
 			return infra(err)
 		}
 		for _, e := range list {
-			res.Errors = append(res.Errors, parseError{Line: e.Pos.Line, Col: e.Pos.Column, Msg: e.Msg})
+			res.Errors = append(res.Errors, parseError{
+				Line: e.Pos.Line,
+				Col:  lines.toUTF16Col(e.Pos.Filename, e.Pos.Line, e.Pos.Column),
+				Msg:  e.Msg,
+			})
 		}
 	}
 	if root != nil {
-		res.AST = buildNode(fset, root)
+		res.AST = buildNode(fset, lines, root)
 	}
 	return emit(res, *pretty)
 }
 
 // buildNode converts an ast.Node and, recursively, its children into the
 // JSON shape of the protocol.
-func buildNode(fset *token.FileSet, n ast.Node) *jsonNode {
+func buildNode(fset *token.FileSet, lines *lineIndex, n ast.Node) *jsonNode {
 	jn := &jsonNode{
 		Kind:     nodeKind(n),
-		Pos:      toPosition(fset, n.Pos()),
-		End:      toPosition(fset, n.End()),
+		Pos:      toPosition(fset, lines, n.Pos()),
+		End:      toPosition(fset, lines, n.End()),
 		Children: []*jsonNode{},
 	}
 	switch v := n.(type) {
@@ -139,14 +151,18 @@ func buildNode(fset *token.FileSet, n ast.Node) *jsonNode {
 		jn.Text = v.Value
 	}
 	for _, c := range directChildren(n) {
-		jn.Children = append(jn.Children, buildNode(fset, c))
+		jn.Children = append(jn.Children, buildNode(fset, lines, c))
 	}
 	return jn
 }
 
-func toPosition(fset *token.FileSet, p token.Pos) position {
+func toPosition(fset *token.FileSet, lines *lineIndex, p token.Pos) position {
 	pos := fset.Position(p)
-	return position{Line: pos.Line, Col: pos.Column, Offset: pos.Offset}
+	return position{
+		Line:   pos.Line,
+		Col:    lines.toUTF16Col(pos.Filename, pos.Line, pos.Column),
+		Offset: pos.Offset,
+	}
 }
 
 // nodeKind names a node after its go/ast type: *ast.FuncDecl -> "FuncDecl".
