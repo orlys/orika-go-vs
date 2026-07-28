@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json.schemastore.org/vs-2017.3.host",
+  "icon": "icon.png",
+  "order": 1,
+  "symbolInfo": [
+    {
+      "id": "langVersion",
+      "name": { "text": "Go 語言版本" },
+      "isVisible": true
+    }
+  ]
+}

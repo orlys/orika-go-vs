@@ -1,0 +1,92 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Orika",
+  "classifications": [ "Go", "Library" ],
+  "identity": "Orika.Go.Library",
+  "name": "Orika Go 類別庫",
+  "shortName": "go-lib",
+  "description": "建立 Go 類別庫模組（Orika.NET.Sdk，OutputType=Library）：dotnet build 會對整個模組做編譯檢查，不產出可執行檔。",
+  "tags": {
+    "language": "Go",
+    "type": "project"
+  },
+  "sourceName": "OrikaGoLib",
+  "preferNameDirectory": true,
+  "forms": {
+    "lc": { "identifier": "lowerCase" },
+    "goIdentChars": {
+      "identifier": "replace",
+      "pattern": "[^\\p{L}\\p{Nd}_]",
+      "replacement": "_"
+    },
+    "goIdentCollapse": {
+      "identifier": "replace",
+      "pattern": "_+",
+      "replacement": "_"
+    },
+    "goIdentNoLeadingDigit": {
+      "identifier": "replace",
+      "pattern": "^([0-9])",
+      "replacement": "_$1"
+    },
+    "goPackageSafe": {
+      "identifier": "chain",
+      "steps": [ "lc", "goIdentChars", "goIdentCollapse", "goIdentNoLeadingDigit" ]
+    },
+    "goModuleChars": {
+      "identifier": "replace",
+      "pattern": "[^A-Za-z0-9._~-]",
+      "replacement": "_"
+    },
+    "goModuleCollapse": {
+      "identifier": "replace",
+      "pattern": "_+",
+      "replacement": "_"
+    },
+    "goModuleTrimDots": {
+      "identifier": "replace",
+      "pattern": "^[.]+|[.]+$",
+      "replacement": ""
+    },
+    "goModuleSafe": {
+      "identifier": "chain",
+      "steps": [ "goModuleChars", "goModuleCollapse", "goModuleTrimDots" ]
+    }
+  },
+  "symbols": {
+    "goModuleName": {
+      "type": "derived",
+      "valueSource": "name",
+      "valueTransform": "goModuleSafe",
+      "replaces": "GO_MODULE_NAME",
+      "description": "go.mod 的 module 路徑：專案名稱經 ASCII 淨化（Go 模組路徑禁止非 ASCII 字元，非法字元以 _ 取代）。"
+    },
+    "langVersion": {
+      "type": "parameter",
+      "datatype": "choice",
+      "description": "Go 語言版本：寫入 .goproj 的 <LangVersion> 與 go.mod 的 go 指示詞。",
+      "defaultValue": "1.21",
+      "replaces": "GO_LANG_VERSION",
+      "displayName": "Go 語言版本",
+      "choices": [
+        { "choice": "1.13", "description": "Go 1.13（無泛型；語言功能以 go.mod 指示詞把關）" },
+        { "choice": "1.18", "description": "Go 1.18（引入泛型）" },
+        { "choice": "1.21", "description": "Go 1.21（預設；符合本機工具鏈）" },
+        { "choice": "1.22", "description": "Go 1.22（需 GOTOOLCHAIN 下載對應工具鏈）" },
+        { "choice": "1.23", "description": "Go 1.23" },
+        { "choice": "1.24", "description": "Go 1.24" },
+        { "choice": "1.25", "description": "Go 1.25" }
+      ]
+    },
+    "packageName": {
+      "type": "derived",
+      "valueSource": "name",
+      "valueTransform": "goPackageSafe",
+      "replaces": "orikagolib",
+      "description": "Go package 名稱：專案名稱的小寫形式，並淨化為合法的 Go 識別項（非法字元以 _ 取代）。"
+    }
+  },
+  "primaryOutputs": [
+    { "path": "OrikaGoLib.goproj" }
+  ]
+}

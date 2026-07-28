@@ -1,0 +1,25 @@
+// Registers ".goproj" as its own project type, mirroring the pattern VS itself
+// uses for ".msbuildproj" (Common7\IDE\CommonExtensions\Microsoft\Project\msbuildproj.pkgdef):
+// a dedicated project-type GUID whose "Package" is the generic CPS package
+// {3347BEE8-D7A1-4082-95E4-38A439553CC2}. CPS evaluates the project file with
+// MSBuild, so Sdk="Orika.NET.Sdk/1.0.0" resolves normally and builds drive the
+// Go toolchain.
+//
+// Why not append "goproj" to PossibleProjectExtensions of the C#/SDK factory
+// ({9A19103F-...} or {FAE04EC0-...})? Pkgdef merge is value ASSIGNMENT with no
+// ordering guarantee against VS's own pkgdefs — the in-box value ("csproj") can
+// be merged after ours and silently drop the registration, which manifests as
+// "The template specified cannot be found" when the New Project dialog tries to
+// open a freshly created .goproj. A dedicated key has no competing writers.
+[$RootKey$\Projects\{8A0FBF95-6C22-4C1E-A1F5-2E9E7B3B7A10}]
+@="ProjectFactory"
+"DisplayName"="Orika Go Project"
+"DisplayProjectFileExtensions"="Go Project Files (*.goproj);*.goproj"
+"Package"="{3347BEE8-D7A1-4082-95E4-38A439553CC2}"
+"DefaultProjectExtension"="goproj"
+"PossibleProjectExtensions"="goproj"
+"Language(VsTemplate)"="Go"
+"DisableAsynchronousSolutionLoad"=dword:00000000
+"DisableAsynchronousProjectTreeLoad"=dword:00000001
+"PrefetchFactory"="{3998970A-AEE1-4216-A54F-0A99D20A1FAB}"
+"Capabilities"="HandlesOwnReload;OpenProjectFile;EnableOnDemandExcludedFolderLoading"

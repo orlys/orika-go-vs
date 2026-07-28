@@ -1,0 +1,8 @@
+<Project Sdk="Orika.NET.Sdk/1.0.0">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <LangVersion>GO_LANG_VERSION</LangVersion>
+  </PropertyGroup>
+
+</Project>

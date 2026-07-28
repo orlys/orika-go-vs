@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Orika.Go.CodeAnalysis</RootNamespace>
+    <AssemblyName>Orika.Go.CodeAnalysis</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Description>Roslyn 風格的 Go 編譯器平台 C# 端，透過 orika-goc sidecar 提供語法樹、診斷與語意查詢。</Description>
+  </PropertyGroup>
+
+</Project>

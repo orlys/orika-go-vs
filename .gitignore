@@ -1,0 +1,14 @@
+# Build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Local NuGet feed produced by build-sdk.ps1 / dotnet pack
+packages/
+
+# Go
+*.exe
+*.test
+vendor/

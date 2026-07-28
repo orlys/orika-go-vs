@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Registers the custom Solution Explorer image monikers for Go projects/files with
+  the Visual Studio image service.
+
+  Discovery: VS scans installed extension directories for *.imagemanifest files, so
+  this file only needs to be deployed loose at the VSIX root (Build Action=Content,
+  IncludeInVSIX=true). No <Asset> entry in the vsixmanifest and no pkgdef key are
+  required (verified against VS 2026's own Container Tools extension, which ships
+  ExtensionsMonikers.imagemanifest exactly this way).
+
+  Sources MUST be WPF component resource URIs: the image service loads managed
+  sources via WPF Application.GetResourceStream, which only accepts relative /
+  pack-application URIs (absolute file paths are reserved for native-resource DLL
+  containers). The PNGs are therefore embedded via <Resource> items compiled by
+  Microsoft.WinFX.targets into OrikaGo.LanguageService.g.resources.
+-->
+<ImageManifest
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns="http://schemas.microsoft.com/VisualStudio/ImageManifestSchema/2014">
+  <Symbols>
+    <!-- Assembly is not strong-named, so the short component reference is correct. -->
+    <String Name="Resources" Value="/OrikaGo.LanguageService;Component/Resources" />
+    <Guid Name="OrikaGoImagesGuid" Value="{7DDCABCB-7E1F-442F-8025-401F9CC88093}" />
+    <ID Name="GoProjectNode" Value="1" />
+    <ID Name="GoFileNode" Value="2" />
+  </Symbols>
+  <Images>
+    <Image Guid="$(OrikaGoImagesGuid)" ID="$(GoProjectNode)">
+      <Source Uri="$(Resources)/GoProjectNode.16.png">
+        <Size Value="16" />
+      </Source>
+      <Source Uri="$(Resources)/GoProjectNode.32.png">
+        <Size Value="32" />
+      </Source>
+    </Image>
+    <Image Guid="$(OrikaGoImagesGuid)" ID="$(GoFileNode)">
+      <Source Uri="$(Resources)/GoFileNode.16.png">
+        <Size Value="16" />
+      </Source>
+      <Source Uri="$(Resources)/GoFileNode.32.png">
+        <Size Value="32" />
+      </Source>
+    </Image>
+  </Images>
+  <ImageLists />
+</ImageManifest>

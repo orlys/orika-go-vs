@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Orika.NET.Sdk / Sdk / Sdk.props
+  MSBuild project SDK that drives the Go toolchain through the .NET CLI.
+
+  Imported BEFORE the user's project body. Layering (same technique as
+  Microsoft.Build.NoTargets): defaults -> Microsoft.NET.Sdk props ->
+  neutralize the managed-compile surface -> Go item globs.
+-->
+<Project>
+
+  <PropertyGroup>
+    <UsingOrikaNETSdk>true</UsingOrikaNETSdk>
+
+    <!-- Defaults; every one of these is overridable from the project body. -->
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net10.0</TargetFramework>
+    <OutputType Condition="'$(OutputType)' == ''">Exe</OutputType>
+    <AssemblyName Condition="'$(AssemblyName)' == ''">$(MSBuildProjectName)</AssemblyName>
+    <GoModuleName Condition="'$(GoModuleName)' == ''">$(AssemblyName)</GoModuleName>
+
+    <!-- Microsoft.NET.Sdk sets this only for .cs/.vb/.fsproj. A .goproj leaves it
+         empty, which is what tells Sdk.targets to wire up the CPS design-time
+         targets by hand (see CustomBeforeMicrosoftCommonTargets there). -->
+    <ManagedLanguageTargetsGotImported Condition="'$(MSBuildProjectExtension)' == '.csproj'">true</ManagedLanguageTargetsGotImported>
+    <ManagedLanguageTargetsGotImported Condition="'$(MSBuildProjectExtension)' == '.vbproj'">true</ManagedLanguageTargetsGotImported>
+    <ManagedLanguageTargetsGotImported Condition="'$(MSBuildProjectExtension)' == '.fsproj'">true</ManagedLanguageTargetsGotImported>
+
+    <!-- Restore always runs in PackageReference mode, even with no PackageReference item. -->
+    <RestoreProjectStyle Condition="'$(RestoreProjectStyle)' == ''">PackageReference</RestoreProjectStyle>
+
+    <!-- TargetFramework only exists to satisfy Microsoft.NET.Sdk; it says nothing about
+         a Go binary, so it must not appear in the paths a Go developer looks at.
+         Output lands in bin/$(Configuration)/ instead of bin/$(Configuration)/net10.0/. -->
+    <AppendTargetFrameworkToOutputPath Condition="'$(AppendTargetFrameworkToOutputPath)' == ''">false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <!-- Declared before the nested import so a later definition can win. Visual
+       Studio's project system invokes this target during design-time builds;
+       without it the project fails to open with "missing some critical imports". -->
+  <Target Name="CompileDesignTime" />
+
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" Condition="'$(MicrosoftCommonPropsHasBeenImported)' != 'true'" />
+
+  <PropertyGroup>
+    <!-- No C# sources and no generated .cs (AssemblyInfo / TargetFrameworkAttribute). -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+
+    <!-- No managed outputs: no deps.json, no runtimeconfig.json, no obj->bin
+         assembly copy, no .NET apphost. The only build product is the Go binary. -->
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+    <CopyBuildOutputToOutputDirectory>false</CopyBuildOutputToOutputDirectory>
+    <UseAppHost>false</UseAppHost>
+
+    <!-- No Microsoft.NETCore.App FrameworkReference (nothing to restore per-RID),
+         and no implicit NET10_0/NETCOREAPP/OS defines leaking into "go build -tags". -->
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <DisableImplicitFrameworkDefines>true</DisableImplicitFrameworkDefines>
+
+    <NoWarn>$(NoWarn);NETSDK1085</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Distinct CPS capability so VS extensions can AppliesTo-target Go (.goproj) projects. -->
+    <ProjectCapability Include="OrikaGo" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Build inputs for the Go toolchain (also drive MSBuild incrementality).
+         Visible="false": the same files are already displayed in Solution Explorer
+         through Microsoft.NET.Sdk's default None glob (None Include="**/*"), so a
+         visible GoCompile item would show every .go file twice. -->
+    <GoCompile Include="**/*.go"
+               Exclude="$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder);bin/**;obj/**"
+               Visible="false" />
+
+    <!-- go.mod / go.sum are picked up by the default None glob when it is enabled.
+         Keep them visible in Solution Explorer even if a user disables that glob. -->
+    <None Include="go.mod"
+          Condition="'$(EnableDefaultNoneItems)' == 'false' And Exists('$(MSBuildProjectDirectory)/go.mod')" />
+    <None Include="go.sum"
+          Condition="'$(EnableDefaultNoneItems)' == 'false' And Exists('$(MSBuildProjectDirectory)/go.sum')" />
+  </ItemGroup>
+
+</Project>

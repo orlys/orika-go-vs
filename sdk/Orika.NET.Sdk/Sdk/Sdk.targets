@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Orika.NET.Sdk / Sdk / Sdk.targets
+  Imported AFTER the user's project body. Imports the full Microsoft.NET.Sdk
+  target graph first, then overrides the compile/run/clean/test/publish surface
+  so that every verb drives the Go toolchain instead of Roslyn.
+
+  Note on the target graph: for a .goproj, Microsoft.NET.Sdk falls back to
+  LanguageTargets = Microsoft.Common.targets, which references but does NOT
+  define CoreCompile and CreateManifestResourceNames. Both are defined below
+  (same class of override Microsoft.Build.NoTargets uses).
+-->
+<Project>
+
+  <PropertyGroup>
+    <!-- Microsoft.NET.Sdk only defaults LanguageTargets for .cs/.vb/.fsproj, and it
+         imports the value immediately, so a .goproj must set it before that import. -->
+    <LanguageTargets Condition="'$(LanguageTargets)' == '' And '$(MSBuildProjectExtension)' != '.csproj' And '$(MSBuildProjectExtension)' != '.vbproj' And '$(MSBuildProjectExtension)' != '.fsproj'">$(MSBuildToolsPath)\Microsoft.Common.targets</LanguageTargets>
+
+    <!-- THE import Visual Studio's project system means by "critical imports":
+         Microsoft.Managed.DesignTime.targets supplies the design-time build targets
+         CPS calls when opening a project. The managed language targets bring it in
+         for .csproj/.vbproj/.fsproj; a .goproj has to inject it itself, otherwise the
+         project builds fine from the CLI but fails to open in Visual Studio.
+         (Same technique as Microsoft.Build.NoTargets.) -->
+    <CustomBeforeMicrosoftCommonTargets Condition="'$(ManagedLanguageTargetsGotImported)' == '' And Exists('$(MSBuildExtensionsPath)\Microsoft\VisualStudio\Managed\Microsoft.Managed.DesignTime.targets')">$(CustomBeforeMicrosoftCommonTargets);$(MSBuildExtensionsPath)\Microsoft\VisualStudio\Managed\Microsoft.Managed.DesignTime.targets</CustomBeforeMicrosoftCommonTargets>
+  </PropertyGroup>
+
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" Condition="'$(CommonTargetsPath)' == ''" />
+
+  <!-- Microsoft.Managed.targets carries tasks that Microsoft.Common.CurrentVersion.targets
+       expects; the managed language targets normally import it. -->
+  <Import Project="$(MSBuildToolsPath)\Microsoft.Managed.targets" Condition="'$(MSBuildAssemblyVersion)' >= '16.0' And '$(ManagedLanguageTargetsGotImported)' != 'true'" />
+
+  <!-- ======================================================================
+       Static computed properties
+       ====================================================================== -->
+  <PropertyGroup>
+    <_GoHostIsWindows>$([MSBuild]::IsOSPlatform('Windows'))</_GoHostIsWindows>
+
+    <!-- Regular build: GOOS/GoArch may be set by the user; default is the host. -->
+    <_GoBuildExeSuffix Condition="'$(GoOS)' == 'windows' Or ('$(GoOS)' == '' And '$(_GoHostIsWindows)' == 'true')">.exe</_GoBuildExeSuffix>
+    <GoOutputPath Condition="'$(GoOutputPath)' == ''">$(TargetDir)$(AssemblyName)$(_GoBuildExeSuffix)</GoOutputPath>
+
+    <!-- Marker written into obj/$(Configuration)/$(TargetFramework)/ so MSBuild
+         incrementality has an output to compare against (Library builds produce
+         no file at all; Exe builds additionally compare the exe itself). -->
+    <_GoBuildStamp>$(IntermediateOutputPath)go.build.stamp</_GoBuildStamp>
+    <_GoBuildOutputs>$(_GoBuildStamp)</_GoBuildOutputs>
+    <_GoBuildOutputs Condition="'$(OutputType)' == 'Exe'">$(_GoBuildStamp);$(GoOutputPath)</_GoBuildOutputs>
+  </PropertyGroup>
+
+  <!-- Re-point the managed output identity at the Go executable. TargetFileName /
+       TargetPath were computed from TargetExt=.dll during the import above, so they
+       must be recomputed here. This is the glue that makes GetTargetPath (and any
+       ProjectReference to a .goproj) return the real build product. -->
+  <PropertyGroup Condition="'$(OutputType)' == 'Exe'">
+    <TargetExt>$(_GoBuildExeSuffix)</TargetExt>
+    <TargetFileName>$(AssemblyName)$(TargetExt)</TargetFileName>
+    <TargetPath>$(TargetDir)$(TargetFileName)</TargetPath>
+  </PropertyGroup>
+
+  <!-- dotnet run: execute the Go binary directly from the project directory.
+       All three must be overridden: Microsoft.NET.Sdk already defaulted
+       RunCommand=dotnet / RunArguments=exec "…dll" during the import above. -->
+  <PropertyGroup Condition="'$(OutputType)' == 'Exe'">
+    <RunCommand>$(GoOutputPath)</RunCommand>
+    <RunArguments>$(StartArguments)</RunArguments>
+    <RunWorkingDirectory>$(MSBuildProjectDirectory)</RunWorkingDirectory>
+  </PropertyGroup>
+
+  <!-- RID -> GOOS/GOARCH map for dotnet publish -r <rid>. -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <_GoRidOS Condition="$(RuntimeIdentifier.StartsWith('win-'))">windows</_GoRidOS>
+    <_GoRidOS Condition="$(RuntimeIdentifier.StartsWith('linux-'))">linux</_GoRidOS>
+    <_GoRidOS Condition="$(RuntimeIdentifier.StartsWith('osx-'))">darwin</_GoRidOS>
+    <_GoRidArch Condition="$(RuntimeIdentifier.EndsWith('-x64'))">amd64</_GoRidArch>
+    <_GoRidArch Condition="$(RuntimeIdentifier.EndsWith('-arm64'))">arm64</_GoRidArch>
+  </PropertyGroup>
+
+  <!-- Inputs for incremental builds. Evaluated statically; go.mod/go.sum are only
+       added when they exist so a missing go.sum does not force perpetual rebuilds. -->
+  <ItemGroup>
+    <_GoBuildInput Include="@(GoCompile)" />
+    <_GoBuildInput Include="go.mod" Condition="Exists('$(MSBuildProjectDirectory)/go.mod')" />
+    <_GoBuildInput Include="go.sum" Condition="Exists('$(MSBuildProjectDirectory)/go.sum')" />
+    <_GoBuildInput Include="$(MSBuildProjectFullPath)" />
+  </ItemGroup>
+
+  <!-- ======================================================================
+       Module bootstrap: go.mod existence + LangVersion -> go directive.
+       The go directive is the real LangVersion semantic: the Go toolchain
+       gates language features on it (e.g. generics need go >= 1.18).
+       ====================================================================== -->
+  <Target Name="GoEnsureMod" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec Command="go mod init &quot;$(GoModuleName)&quot;"
+          Condition="!Exists('$(MSBuildProjectDirectory)/go.mod')"
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          StandardOutputImportance="normal" />
+    <!-- "go mod edit" rewrites go.mod even when nothing changes, which would make
+         go.mod perpetually newer than the build stamp and defeat incremental
+         builds - so only run it when the directive actually differs.
+         GOTOOLCHAIN=local: editing go.mod must never require the toolchain the
+         file currently demands, or downgrading LangVersion wedges when go.mod
+         points at a Go newer than the one installed. -->
+    <Exec Command="go mod edit -go=$(LangVersion)"
+          Condition="'$(LangVersion)' != '' And Exists('$(MSBuildProjectDirectory)/go.mod') And !$([System.Text.RegularExpressions.Regex]::IsMatch($([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)/go.mod')), '(?m)^go\s+$(LangVersion)\s*$'))"
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          EnvironmentVariables="GOTOOLCHAIN=local"
+          StandardOutputImportance="normal" />
+  </Target>
+
+  <!-- ======================================================================
+       Shared argument/environment computation for build, vet and test.
+       ====================================================================== -->
+  <Target Name="GoPrepareBuildSettings">
+    <ItemGroup>
+      <!-- Item-splitting on $(DefineConstants) drops empty entries, so
+           "FOO;;BAR;" still yields clean "-tags FOO,BAR". -->
+      <_GoDefineConstant Include="$(DefineConstants)" />
+
+      <_GoEnv Include="GOOS=$(GoOS)" Condition="'$(GoOS)' != ''" />
+      <_GoEnv Include="GOARCH=$(GoArch)" Condition="'$(GoArch)' != ''" />
+      <_GoEnv Include="GOTOOLCHAIN=$(GoToolchain)" Condition="'$(GoToolchain)' != ''" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_GoTags>@(_GoDefineConstant, ',')</_GoTags>
+      <!-- Escaped semicolons (%3B on the command line) survive item splitting;
+           normalize them to commas as well. -->
+      <_GoTags>$(_GoTags.Replace(';', ','))</_GoTags>
+
+      <_GoBuildArgs Condition="'$(Configuration)' == 'Release'">-trimpath -ldflags "-s -w"</_GoBuildArgs>
+      <_GoBuildArgs Condition="'$(Configuration)' == 'Debug'">-gcflags "all=-N -l"</_GoBuildArgs>
+      <_GoBuildArgs Condition="'$(_GoTags)' != ''">$(_GoBuildArgs) -tags "$(_GoTags)"</_GoBuildArgs>
+      <_GoBuildArgs Condition="'$(GoFlags)' != ''">$(_GoBuildArgs) $(GoFlags)</_GoBuildArgs>
+    </PropertyGroup>
+
+    <!-- Persist the effective arguments/environment so flag-only changes
+         (e.g. a different DefineConstants -> -tags) invalidate GoBuild's
+         up-to-date check; without this a stale binary is silently reused. -->
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <WriteLinesToFile File="$(IntermediateOutputPath)go.build.args"
+                      Lines="$(_GoBuildArgs);@(_GoEnv)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <_GoBuildInput Include="$(IntermediateOutputPath)go.build.args" />
+    </ItemGroup>
+  </Target>
+
+  <!-- ======================================================================
+       Build
+       ====================================================================== -->
+  <Target Name="GoBuild"
+          Condition="'$(DesignTimeBuild)' != 'true'"
+          DependsOnTargets="GoEnsureMod;GoPrepareBuildSettings"
+          Inputs="@(_GoBuildInput)"
+          Outputs="$(_GoBuildOutputs)">
+    <MakeDir Directories="$(TargetDir);$(IntermediateOutputPath)" />
+
+    <Exec Condition="'$(OutputType)' == 'Exe'"
+          Command="go build $(_GoBuildArgs) -o &quot;$(GoOutputPath)&quot; ."
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          EnvironmentVariables="@(_GoEnv)" />
+
+    <!-- Library: compile-check the whole module, no artifact. -->
+    <Exec Condition="'$(OutputType)' != 'Exe'"
+          Command="go build $(_GoBuildArgs) ./..."
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          EnvironmentVariables="@(_GoEnv)" />
+
+    <Touch Files="$(_GoBuildStamp)" AlwaysCreate="true" />
+    <Message Importance="High" Text="$(MSBuildProjectName) -&gt; $(GoOutputPath)" Condition="'$(OutputType)' == 'Exe'" />
+  </Target>
+
+  <!-- CoreCompile is referenced by Microsoft.Common's CompileDependsOn but (like
+       CreateManifestResourceNames) is normally defined by language targets that a
+       .goproj never imports. Defining them here both completes the target graph
+       and guarantees Roslyn never runs. -->
+  <Target Name="CoreCompile" DependsOnTargets="GoBuild" />
+  <Target Name="CreateManifestResourceNames" />
+
+  <!-- Optional lint pass: dotnet build -p:RunGoVet=true -->
+  <Target Name="GoVet"
+          AfterTargets="GoBuild"
+          Condition="'$(RunGoVet)' == 'true' And '$(DesignTimeBuild)' != 'true'"
+          DependsOnTargets="GoPrepareBuildSettings">
+    <Exec Command="go vet ./..."
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          EnvironmentVariables="@(_GoEnv)" />
+  </Target>
+
+  <!-- ======================================================================
+       Clean. The Go outputs are deliberately not recorded in @(FileWrites)
+       (a skipped-up-to-date GoBuild would leave them out of the current list
+       and IncrementalClean would delete a perfectly good binary), so they are
+       removed explicitly here. Both suffixed and suffixless names are deleted
+       to cover cross-OS GoOS builds.
+       ====================================================================== -->
+  <Target Name="GoClean" AfterTargets="CoreClean">
+    <Delete Files="$(TargetDir)$(AssemblyName).exe;$(TargetDir)$(AssemblyName);$(_GoBuildStamp)" />
+  </Target>
+
+  <!-- ======================================================================
+       Test: dotnet test => go test ./... ; a non-zero exit code from Exec
+       fails the target, which fails dotnet test. Overrides/supplies the VSTest
+       entry point the CLI invokes.
+       ====================================================================== -->
+  <Target Name="VSTest" DependsOnTargets="GoEnsureMod;GoPrepareBuildSettings">
+    <Exec Command="go test $(GoTestFlags) ./..."
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          EnvironmentVariables="@(_GoEnv)" />
+  </Target>
+
+  <!-- ======================================================================
+       Publish: dotnet publish [-r <rid>] => cross-compiled Go binary in
+       $(PublishDir) (bin/$(Configuration)/$(TargetFramework)/<rid>/publish/).
+       This replaces Microsoft.NET.Publish.targets' Publish target entirely -
+       there is no managed payload to lay out, and depending on Build would
+       only produce a host-OS binary that publish does not use.
+       ====================================================================== -->
+  <Target Name="_GoValidatePublishRid" Condition="'$(RuntimeIdentifier)' != ''">
+    <Error Condition="'$(_GoRidOS)' == '' Or '$(_GoRidArch)' == ''"
+           Text="Orika.NET.Sdk: RuntimeIdentifier '$(RuntimeIdentifier)' has no GOOS/GOARCH mapping. Supported RIDs: win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, osx-arm64." />
+  </Target>
+
+  <Target Name="_GoPreparePublishSettings" DependsOnTargets="GoPrepareBuildSettings">
+    <PropertyGroup>
+      <!-- Explicit GoOS/GoArch win over the RID map; default is the host. -->
+      <_GoPublishOS>$(GoOS)</_GoPublishOS>
+      <_GoPublishOS Condition="'$(_GoPublishOS)' == ''">$(_GoRidOS)</_GoPublishOS>
+      <_GoPublishArch>$(GoArch)</_GoPublishArch>
+      <_GoPublishArch Condition="'$(_GoPublishArch)' == ''">$(_GoRidArch)</_GoPublishArch>
+
+      <!-- .exe suffix only when the effective GOOS is windows. -->
+      <_GoPublishExeSuffix Condition="'$(_GoPublishOS)' == 'windows' Or ('$(_GoPublishOS)' == '' And '$(_GoHostIsWindows)' == 'true')">.exe</_GoPublishExeSuffix>
+      <GoPublishOutputPath Condition="'$(GoPublishOutputPath)' == ''">$(PublishDir)$(AssemblyName)$(_GoPublishExeSuffix)</GoPublishOutputPath>
+    </PropertyGroup>
+    <ItemGroup>
+      <_GoPublishEnv Include="GOOS=$(_GoPublishOS)" Condition="'$(_GoPublishOS)' != ''" />
+      <_GoPublishEnv Include="GOARCH=$(_GoPublishArch)" Condition="'$(_GoPublishArch)' != ''" />
+      <_GoPublishEnv Include="GOTOOLCHAIN=$(GoToolchain)" Condition="'$(GoToolchain)' != ''" />
+    </ItemGroup>
+  </Target>
+
+  <PropertyGroup>
+    <GoPublishDependsOn>_GoValidatePublishRid;GoEnsureMod;_GoPreparePublishSettings</GoPublishDependsOn>
+  </PropertyGroup>
+
+  <Target Name="Publish"
+          Condition="'$(IsPublishable)' == 'true'"
+          DependsOnTargets="$(GoPublishDependsOn)">
+    <MakeDir Directories="$(PublishDir)" />
+
+    <Exec Condition="'$(OutputType)' == 'Exe'"
+          Command="go build $(_GoBuildArgs) -o &quot;$(GoPublishOutputPath)&quot; ."
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          EnvironmentVariables="@(_GoPublishEnv)" />
+
+    <Exec Condition="'$(OutputType)' != 'Exe'"
+          Command="go build $(_GoBuildArgs) ./..."
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          EnvironmentVariables="@(_GoPublishEnv)" />
+
+    <Message Importance="High" Text="$(MSBuildProjectName) -&gt; $([System.IO.Path]::GetFullPath('$(PublishDir)'))" />
+  </Target>
+
+</Project>

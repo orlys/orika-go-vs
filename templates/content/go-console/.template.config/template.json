@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Orika",
+  "classifications": [ "Go", "Console" ],
+  "identity": "Orika.Go.Console",
+  "name": "Orika Go 主控台應用程式",
+  "shortName": "go-console",
+  "description": "建立可透過 dotnet build / run / test 驅動 go 工具鏈的 Go 主控台應用程式（Orika.NET.Sdk）。",
+  "tags": {
+    "language": "Go",
+    "type": "project"
+  },
+  "sourceName": "OrikaGoApp",
+  "preferNameDirectory": true,
+  "forms": {
+    "goModuleChars": {
+      "identifier": "replace",
+      "pattern": "[^A-Za-z0-9._~-]",
+      "replacement": "_"
+    },
+    "goModuleCollapse": {
+      "identifier": "replace",
+      "pattern": "_+",
+      "replacement": "_"
+    },
+    "goModuleTrimDots": {
+      "identifier": "replace",
+      "pattern": "^[.]+|[.]+$",
+      "replacement": ""
+    },
+    "goModuleSafe": {
+      "identifier": "chain",
+      "steps": [ "goModuleChars", "goModuleCollapse", "goModuleTrimDots" ]
+    }
+  },
+  "symbols": {
+    "goModuleName": {
+      "type": "derived",
+      "valueSource": "name",
+      "valueTransform": "goModuleSafe",
+      "replaces": "GO_MODULE_NAME",
+      "description": "go.mod 的 module 路徑：專案名稱經 ASCII 淨化（Go 模組路徑禁止非 ASCII 字元，非法字元以 _ 取代）。"
+    },
+    "langVersion": {
+      "type": "parameter",
+      "datatype": "choice",
+      "description": "Go 語言版本：寫入 .goproj 的 <LangVersion> 與 go.mod 的 go 指示詞。",
+      "defaultValue": "1.21",
+      "replaces": "GO_LANG_VERSION",
+      "displayName": "Go 語言版本",
+      "choices": [
+        { "choice": "1.13", "description": "Go 1.13（無泛型；語言功能以 go.mod 指示詞把關）" },
+        { "choice": "1.18", "description": "Go 1.18（引入泛型）" },
+        { "choice": "1.21", "description": "Go 1.21（預設；符合本機工具鏈）" },
+        { "choice": "1.22", "description": "Go 1.22（需 GOTOOLCHAIN 下載對應工具鏈）" },
+        { "choice": "1.23", "description": "Go 1.23" },
+        { "choice": "1.24", "description": "Go 1.24" },
+        { "choice": "1.25", "description": "Go 1.25" }
+      ]
+    }
+  },
+  "primaryOutputs": [
+    { "path": "OrikaGoApp.goproj" }
+  ]
+}

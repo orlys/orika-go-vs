@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>Orika.NET.Sdk</PackageId>
+    <Version>1.0.0</Version>
+    <PackageType>MSBuildSdk</PackageType>
+    <Description>MSBuild project SDK for building, running, testing, and publishing Go projects with the dotnet CLI.</Description>
+    <Authors>Orika</Authors>
+
+    <!-- This package carries only MSBuild logic (Sdk/Sdk.props + Sdk/Sdk.targets); ship no assembly, no deps. -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+
+    <!-- Nothing to compile; keep the (empty) build inert. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <CopyBuildOutputToOutputDirectory>false</CopyBuildOutputToOutputDirectory>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <NoWarn>$(NoWarn);NU5128;NETSDK1085;CS2008;CS8021</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The SDK itself: everything under Sdk/ lands at Sdk/ inside the .nupkg. -->
+    <None Include="Sdk\**" Pack="true" PackagePath="Sdk\" />
+  </ItemGroup>
+
+</Project>

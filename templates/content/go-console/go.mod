@@ -1,0 +1,3 @@
+module GO_MODULE_NAME
+
+go GO_LANG_VERSION

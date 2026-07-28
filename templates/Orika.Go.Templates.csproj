@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    dotnet-new template package. Pack-only project: it carries the template
+    content under content/ and produces no assembly. VS 2022+ surfaces the
+    installed templates in the New Project dialog automatically.
+
+    Pack (from D:/source/dotnet-project/epic):
+      dotnet pack templates/Orika.Go.Templates.csproj -c Release -o packages
+    Install:
+      dotnet new install Orika.Go.Templates (with ./packages mapped in nuget.config),
+      or point the install at the local feed with the nuget-source option.
+  -->
+  <PropertyGroup>
+    <PackageId>Orika.Go.Templates</PackageId>
+    <PackageVersion>1.0.2</PackageVersion>
+    <PackageType>Template</PackageType>
+    <Title>Orika Go 專案範本</Title>
+    <Authors>Orika</Authors>
+    <Description>Go 專案範本（主控台應用程式與類別庫），以 Orika.NET.Sdk 驅動 go 工具鏈。安裝後可透過 dotnet new go-console / go-lib 或 Visual Studio 的「新增專案」對話方塊使用。</Description>
+    <PackageTags>dotnet-new;templates;go;golang;orika</PackageTags>
+
+    <TargetFramework>net10.0</TargetFramework>
+    <IncludeContentInPack>true</IncludeContentInPack>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <ContentTargetFolders>content</ContentTargetFolders>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <!-- Required so the dot-directories (.template.config) are packed. -->
+    <NoDefaultExcludes>true</NoDefaultExcludes>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="content\**\*" Exclude="content\**\bin\**;content\**\obj\**" />
+    <Compile Remove="**\*" />
+  </ItemGroup>
+
+</Project>
