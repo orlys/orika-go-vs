@@ -11,6 +11,7 @@ using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Threading;
 using Microsoft.VisualStudio.Utilities;
+using StreamJsonRpc;
 using Task = System.Threading.Tasks.Task;
 
 namespace OrikaGo.LanguageService
@@ -23,12 +24,15 @@ namespace OrikaGo.LanguageService
     /// </summary>
     [Export(typeof(ILanguageClient))]
     [ContentType(GoContentTypeDefinitions.ContentTypeName)]
-    public sealed class GoLanguageClient : ILanguageClient, IDisposable
+    public sealed class GoLanguageClient : ILanguageClient, ILanguageClientCustomMessage2, IDisposable
     {
         private const string LogSource = "OrikaGo.LanguageService";
 
         private readonly IServiceProvider _serviceProvider;
         private Process _serverProcess;
+        private JsonRpc _rpc;
+        private FileSystemWatcher[] _watchers;
+        private string _workspaceRoot;
 
         [ImportingConstructor]
         public GoLanguageClient([Import(typeof(SVsServiceProvider))] IServiceProvider serviceProvider)
@@ -153,8 +157,10 @@ namespace OrikaGo.LanguageService
         /// patterns are evaluated per event - so the saving is in LSP traffic and gopls
         /// work, not in OS-level watching. And the only code that reads this property is
         /// the Open Folder host (<c>OpenFolderServices.OnWorkspaceFileSystemChangedAsync</c>);
-        /// in .sln mode nothing consumes it, so a solution-based workspace gets no watched
-        /// file events either way.
+        /// in .sln mode nothing consumes it, which is why <see cref="StartFileWatchers"/>
+        /// runs the same patterns through client-side FileSystemWatchers and forwards
+        /// the events over the rpc itself - solution mode gets watched-file events
+        /// from there instead.
         /// </para>
         /// </summary>
         public IEnumerable<string> FilesToWatch => new[]
@@ -190,16 +196,17 @@ namespace OrikaGo.LanguageService
             string goplsPath = FindGopls();
             if (goplsPath == null)
             {
-                LogError("gopls.exe was not found on PATH or in %USERPROFILE%\\go\\bin. " +
+                LogError("gopls.exe was not found on PATH, in GOBIN, in GOPATH\\bin, or in %USERPROFILE%\\go\\bin. " +
                          "Install it with: go install golang.org/x/tools/gopls@latest");
                 return null;
             }
 
-            string workingDirectory = await GetWorkspaceRootAsync(token);
-            if (string.IsNullOrEmpty(workingDirectory) || !Directory.Exists(workingDirectory))
-            {
-                workingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            }
+            string workspaceRoot = await GetWorkspaceRootAsync(token);
+            _workspaceRoot = !string.IsNullOrEmpty(workspaceRoot) && Directory.Exists(workspaceRoot)
+                ? workspaceRoot
+                : null;
+            string workingDirectory = _workspaceRoot
+                ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
             var startInfo = new ProcessStartInfo
             {
@@ -267,6 +274,10 @@ namespace OrikaGo.LanguageService
         /// </summary>
         private void TerminateServer()
         {
+            // The watchers and the rpc belong to the server instance being torn down.
+            DisposeWatchers();
+            _rpc = null;
+
             Process process = Interlocked.Exchange(ref _serverProcess, null);
             if (process == null)
             {
@@ -314,7 +325,140 @@ namespace OrikaGo.LanguageService
 
         public Task OnServerInitializedAsync()
         {
+            // Not before "initialized": pushing workspace/didChangeWatchedFiles at
+            // any earlier point would violate the LSP lifecycle.
+            StartFileWatchers();
             return Task.CompletedTask;
+        }
+
+        /// <summary>Middle layer is not needed; messages pass through untouched.</summary>
+        public object MiddleLayer => null;
+
+        /// <summary>No custom server-to-client messages are handled.</summary>
+        public object CustomMessageTarget => null;
+
+        /// <summary>
+        /// Captures the JsonRpc connection to gopls. This is the channel the file
+        /// watchers below use to hand-deliver workspace/didChangeWatchedFiles.
+        /// </summary>
+        public Task AttachForCustomMessageAsync(JsonRpc rpc)
+        {
+            _rpc = rpc;
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Client-side replacement for the watched-files channel that solution mode
+        /// lacks. VS only consumes <see cref="FilesToWatch"/> in Open Folder mode, and
+        /// it hardcodes DidChangeWatchedFiles dynamicRegistration=false so gopls cannot
+        /// register its own watcher - so in .sln/.slnx mode (the product's primary
+        /// mode) nothing would ever tell gopls that `go get` in a terminal, or the
+        /// SDK's GoEnsureMod target, rewrote go.mod/go.sum/go.work on disk, and it
+        /// would keep serving a stale module graph until VS restarts. These watchers
+        /// close that gap by forwarding the same patterns as
+        /// <see cref="FilesToWatch"/> straight over the rpc.
+        /// ponytail: no debounce - gopls dedups changes per snapshot; add coalescing
+        /// only if large workspaces show notification pressure.
+        /// </summary>
+        private void StartFileWatchers()
+        {
+            DisposeWatchers();
+
+            string root = _workspaceRoot;
+            if (root == null || _rpc == null)
+            {
+                return;
+            }
+
+            var watchers = new List<FileSystemWatcher>(4);
+            foreach (string filter in new[] { "*.go", "go.mod", "go.sum", "go.work" })
+            {
+                try
+                {
+                    var watcher = new FileSystemWatcher(root, filter)
+                    {
+                        IncludeSubdirectories = true,
+                        NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                    };
+                    watcher.Created += (s, e) => NotifyFileChange(e.FullPath, 1);
+                    watcher.Changed += (s, e) => NotifyFileChange(e.FullPath, 2);
+                    watcher.Deleted += (s, e) => NotifyFileChange(e.FullPath, 3);
+                    watcher.Renamed += (s, e) =>
+                    {
+                        NotifyFileChange(e.OldFullPath, 3);
+                        NotifyFileChange(e.FullPath, 1);
+                    };
+                    watcher.EnableRaisingEvents = true;
+                    watchers.Add(watcher);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine("[OrikaGo] file watcher for '" + filter + "' failed: " + ex.Message);
+                }
+            }
+            _watchers = watchers.ToArray();
+        }
+
+        /// <summary>
+        /// Forwards one file event to gopls as workspace/didChangeWatchedFiles
+        /// (1=Created, 2=Changed, 3=Deleted). Excluded trees mirror the negations in
+        /// <see cref="FilesToWatch"/>: build output and node_modules are noise gopls
+        /// was told to ignore via directoryFilters anyway.
+        /// </summary>
+        private void NotifyFileChange(string fullPath, int changeType)
+        {
+            JsonRpc rpc = _rpc;
+            if (rpc == null || IsExcludedPath(fullPath))
+            {
+                return;
+            }
+
+            try
+            {
+                string uri = new Uri(fullPath).AbsoluteUri;
+                _ = rpc.NotifyWithParameterObjectAsync(
+                    "workspace/didChangeWatchedFiles",
+                    new { changes = new[] { new { uri, type = changeType } } });
+            }
+            catch (Exception ex)
+            {
+                // A dead rpc (server restart in flight) is not an error worth surfacing.
+                Debug.WriteLine("[OrikaGo] didChangeWatchedFiles forward failed: " + ex.Message);
+            }
+        }
+
+        private static bool IsExcludedPath(string fullPath)
+        {
+            foreach (string segment in fullPath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            {
+                if (segment.Equals("bin", StringComparison.OrdinalIgnoreCase) ||
+                    segment.Equals("obj", StringComparison.OrdinalIgnoreCase) ||
+                    segment.Equals("node_modules", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private void DisposeWatchers()
+        {
+            FileSystemWatcher[] watchers = Interlocked.Exchange(ref _watchers, null);
+            if (watchers == null)
+            {
+                return;
+            }
+            foreach (FileSystemWatcher watcher in watchers)
+            {
+                try
+                {
+                    watcher.Dispose();
+                }
+                catch (Exception)
+                {
+                    // Disposing a watcher whose directory vanished can throw; ignore.
+                }
+            }
         }
 
         public Task<InitializationFailureContext> OnServerInitializeFailedAsync(ILanguageClientInitializationInfo initializationState)
@@ -379,19 +523,69 @@ namespace OrikaGo.LanguageService
         }
 
         /// <summary>
-        /// Locates gopls.exe: every directory on PATH first, then %USERPROFILE%\go\bin.
+        /// Locates gopls.exe. Order: every directory on PATH, then GOBIN, then each
+        /// GOPATH entry's bin\, then %USERPROFILE%\go\bin. GOBIN/GOPATH are read from
+        /// the process environment AND from `go env` - `go env -w` persists them into
+        /// Go's env file, invisible to GetEnvironmentVariable, and `go install`
+        /// honours exactly those values, so the probe must too or the extension's own
+        /// "go install golang.org/x/tools/gopls@latest" remediation would install to
+        /// a place this method never looks.
         /// </summary>
         private static string FindGopls()
         {
+            var directories = new List<string>();
+
             string pathVariable = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
             foreach (string rawDir in pathVariable.Split(Path.PathSeparator))
             {
-                string dir = rawDir.Trim().Trim('"');
-                if (dir.Length == 0)
+                directories.Add(rawDir.Trim().Trim('"'));
+            }
+
+            string envGobin = Environment.GetEnvironmentVariable("GOBIN");
+            if (!string.IsNullOrEmpty(envGobin))
+            {
+                directories.Add(envGobin.Trim());
+            }
+            string envGopath = Environment.GetEnvironmentVariable("GOPATH");
+            if (!string.IsNullOrEmpty(envGopath))
+            {
+                foreach (string entry in envGopath.Split(Path.PathSeparator))
+                {
+                    if (entry.Trim().Length > 0)
+                    {
+                        directories.Add(Path.Combine(entry.Trim(), "bin"));
+                    }
+                }
+            }
+
+            string[] goEnv = RunGoEnv("GOBIN", "GOPATH");
+            if (goEnv.Length > 0 && goEnv[0].Length > 0)
+            {
+                directories.Add(goEnv[0]);
+            }
+            if (goEnv.Length > 1 && goEnv[1].Length > 0)
+            {
+                foreach (string entry in goEnv[1].Split(Path.PathSeparator))
+                {
+                    if (entry.Trim().Length > 0)
+                    {
+                        directories.Add(Path.Combine(entry.Trim(), "bin"));
+                    }
+                }
+            }
+
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrEmpty(userProfile))
+            {
+                directories.Add(Path.Combine(userProfile, "go", "bin"));
+            }
+
+            foreach (string dir in directories)
+            {
+                if (string.IsNullOrEmpty(dir))
                 {
                     continue;
                 }
-
                 try
                 {
                     string candidate = Path.Combine(dir, "gopls.exe");
@@ -402,21 +596,59 @@ namespace OrikaGo.LanguageService
                 }
                 catch (ArgumentException)
                 {
-                    // Malformed PATH entry (invalid characters) - skip it.
-                }
-            }
-
-            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (!string.IsNullOrEmpty(userProfile))
-            {
-                string fallback = Path.Combine(userProfile, "go", "bin", "gopls.exe");
-                if (File.Exists(fallback))
-                {
-                    return fallback;
+                    // Malformed entry (invalid characters) - skip it.
                 }
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Runs `go env <names>` and returns one trimmed line per requested name
+        /// (positional; unset values come back as empty strings). Returns an empty
+        /// array when the go command is unavailable or misbehaves.
+        /// </summary>
+        private static string[] RunGoEnv(params string[] names)
+        {
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "go",
+                    Arguments = "env " + string.Join(" ", names),
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                };
+                using (var process = Process.Start(startInfo))
+                {
+                    string output = process.StandardOutput.ReadToEnd();
+                    if (!process.WaitForExit(5000))
+                    {
+                        try { process.Kill(); } catch (Exception) { }
+                        return Array.Empty<string>();
+                    }
+                    if (process.ExitCode != 0)
+                    {
+                        return Array.Empty<string>();
+                    }
+
+                    // Positional lines; an unset variable is an EMPTY line, so no
+                    // RemoveEmptyEntries here or the mapping would shift.
+                    string[] lines = output.Replace("\r", string.Empty).Split('\n');
+                    var values = new string[names.Length];
+                    for (int i = 0; i < names.Length; i++)
+                    {
+                        values[i] = i < lines.Length ? lines[i].Trim() : string.Empty;
+                    }
+                    return values;
+                }
+            }
+            catch (Exception)
+            {
+                return Array.Empty<string>();
+            }
         }
 
         /// <summary>

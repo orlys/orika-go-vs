@@ -27,9 +27,18 @@ $vsix = Join-Path $repoRoot 'vsix/OrikaGo.LanguageService/bin/Release/OrikaGo.La
 $extensionId = 'OrikaGo.LanguageService'
 
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-$vsPath = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Workload.VisualStudioExtension -property installationPath
-if (-not $vsPath) {
-    throw "No Visual Studio installation with the extension development workload was found."
+# The extension-development workload is only needed to BUILD the VSIX (MSBuild
+# with the VSSDK targets). -NoBuild just runs VSIXInstaller.exe, which ships
+# with every VS edition, so requiring the workload there would block plain
+# consumers of a prebuilt package.
+if ($NoBuild) {
+    $vsPath = & $vswhere -latest -products '*' -property installationPath
+    if (-not $vsPath) { throw "No Visual Studio installation was found." }
+} else {
+    $vsPath = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Workload.VisualStudioExtension -property installationPath
+    if (-not $vsPath) {
+        throw "No Visual Studio installation with the extension development workload was found. To install a prebuilt VSIX without it, use -NoBuild."
+    }
 }
 
 $devenv = Get-Process devenv -ErrorAction SilentlyContinue

@@ -94,27 +94,77 @@
     <_GoBuildInput Include="$(MSBuildProjectFullPath)" />
   </ItemGroup>
 
+  <!-- Workspace builds resolve imports into SIBLING modules whose sources are
+       not in @(_GoBuildInput) (the globs above are project-local by design), so
+       after editing a sibling library - or adding a replace directive to
+       go.work - a timestamp comparison would skip GoBuild and silently reuse a
+       stale binary. When a go.work governs this project, opt out of the
+       up-to-date skip by listing an input that never exists: MSBuild treats a
+       missing input as out-of-date, so go build always runs, and go's own
+       build cache keeps the no-change case down to one cheap process launch.
+       The probe mirrors GoEnsureWorkspace's: GOWORK wins, else the nearest
+       go.work above the project.
+       ponytail: blanket always-build under go.work; enumerate sibling module
+       sources as real inputs if that process launch ever matters. -->
+  <PropertyGroup>
+    <_GoWorkStaticProbe Condition="'$(GOWORK)' != ''">$(GOWORK)</_GoWorkStaticProbe>
+    <_GoWorkStaticProbe Condition="'$(GOWORK)' == ''">$([MSBuild]::GetPathOfFileAbove('go.work', '$(MSBuildProjectDirectory)'))</_GoWorkStaticProbe>
+  </PropertyGroup>
+  <ItemGroup>
+    <_GoBuildInput Include="$(IntermediateOutputPath)go.workspace.always-out-of-date"
+                   Condition="'$(_GoWorkStaticProbe)' != '' And '$(_GoWorkStaticProbe)' != 'off'" />
+  </ItemGroup>
+
   <!-- ======================================================================
        Module bootstrap: go.mod existence + LangVersion -> go directive.
        The go directive is the real LangVersion semantic: the Go toolchain
        gates language features on it (e.g. generics need go >= 1.18).
        ====================================================================== -->
   <Target Name="GoEnsureMod" Condition="'$(DesignTimeBuild)' != 'true'">
-    <Exec Command="go mod init &quot;$(GoModuleName)&quot;"
-          Condition="!Exists('$(MSBuildProjectDirectory)/go.mod')"
-          WorkingDirectory="$(MSBuildProjectDirectory)"
-          StandardOutputImportance="normal" />
+    <!-- GoExec, not Exec: a failure here (e.g. a GoModuleName override that go
+         still rejects) must surface as a structured GOMOD error, not as an
+         MSB3073 pointing at this file inside the NuGet cache. -->
+    <GoExec Command="go mod init &quot;$(GoModuleName)&quot;"
+            Condition="!Exists('$(MSBuildProjectDirectory)/go.mod')"
+            WorkingDirectory="$(MSBuildProjectDirectory)"
+            ErrorCode="GOMOD" />
     <!-- "go mod edit" rewrites go.mod even when nothing changes, which would make
          go.mod perpetually newer than the build stamp and defeat incremental
          builds - so only run it when the directive actually differs.
          GOTOOLCHAIN=local: editing go.mod must never require the toolchain the
          file currently demands, or downgrading LangVersion wedges when go.mod
          points at a Go newer than the one installed. -->
-    <Exec Command="go mod edit -go=$(LangVersion)"
-          Condition="'$(LangVersion)' != '' And Exists('$(MSBuildProjectDirectory)/go.mod') And !$([System.Text.RegularExpressions.Regex]::IsMatch($([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)/go.mod')), '(?m)^go\s+$(LangVersion)\s*$'))"
-          WorkingDirectory="$(MSBuildProjectDirectory)"
-          EnvironmentVariables="GOTOOLCHAIN=local"
-          StandardOutputImportance="normal" />
+    <GoExec Command="go mod edit -go=$(LangVersion)"
+            Condition="'$(LangVersion)' != '' And Exists('$(MSBuildProjectDirectory)/go.mod') And !$([System.Text.RegularExpressions.Regex]::IsMatch($([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)/go.mod')), '(?m)^go\s+$(LangVersion)\s*$'))"
+            WorkingDirectory="$(MSBuildProjectDirectory)"
+            EnvironmentVariables="GOTOOLCHAIN=local"
+            ErrorCode="GOMOD" />
+  </Target>
+
+  <!-- ======================================================================
+       Module references: <GoModuleReference Include="module/path" Version="vX.Y.Z" />
+       is the PackageReference of the Go world - each one is materialized with
+       "go get module@version", which resolves the module, records it in go.mod
+       and fills go.sum. Version omitted means latest.
+
+       Idempotence follows the same rule as "go mod edit -go" above: "go get"
+       rewrites go.mod/go.sum even when nothing changes, which would defeat the
+       incremental build, so each reference only runs when go.mod does not
+       already require that module (at that version, when one is pinned).
+       Changing Version in the project therefore re-runs it; REMOVING a
+       reference does not remove the require - that is "go mod tidy" territory.
+       ====================================================================== -->
+  <Target Name="GoRestoreModules"
+          Condition="'$(DesignTimeBuild)' != 'true' And '@(GoModuleReference)' != ''"
+          DependsOnTargets="GoEnsureMod">
+    <GoExec Command="go get &quot;%(GoModuleReference.Identity)@%(GoModuleReference.Version)&quot;"
+            Condition="'%(GoModuleReference.Version)' != '' And !$([System.Text.RegularExpressions.Regex]::IsMatch($([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)/go.mod')), '(?m)^[ \t]*(require[ \t]+)?$([System.Text.RegularExpressions.Regex]::Escape('%(GoModuleReference.Identity)'))[ \t]+$([System.Text.RegularExpressions.Regex]::Escape('%(GoModuleReference.Version)'))([ \t]|$)'))"
+            WorkingDirectory="$(MSBuildProjectDirectory)"
+            ErrorCode="GOGET" />
+    <GoExec Command="go get &quot;%(GoModuleReference.Identity)&quot;"
+            Condition="'%(GoModuleReference.Version)' == '' And !$([System.Text.RegularExpressions.Regex]::IsMatch($([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)/go.mod')), '(?m)^[ \t]*(require[ \t]+)?$([System.Text.RegularExpressions.Regex]::Escape('%(GoModuleReference.Identity)'))[ \t]+v'))"
+            WorkingDirectory="$(MSBuildProjectDirectory)"
+            ErrorCode="GOGET" />
   </Target>
 
   <!-- ======================================================================
@@ -303,8 +353,11 @@ try
         psi.CreateNoWindow = true;
         psi.RedirectStandardOutput = true;
         psi.RedirectStandardError = true;
-        // Editing go.work must never require the toolchain go.work names.
-        psi.Environment["GOTOOLCHAIN"] = "local";
+        // Deliberately NOT GOTOOLCHAIN=local: "go work use" LOADS the added
+        // module's go.mod, so a module whose go directive is newer than the
+        // installed toolchain (a langVersion the templates offer) would fail
+        // with "requires go >= X" and could never join the workspace. The
+        // default (auto) downloads the required toolchain, same as GoBuild.
 
         StringBuilder output = new StringBuilder();
         int exit = -1;
@@ -492,7 +545,7 @@ finally
        ====================================================================== -->
   <Target Name="GoBuild"
           Condition="'$(DesignTimeBuild)' != 'true'"
-          DependsOnTargets="GoEnsureMod;GoEnsureWorkspace;GoPrepareBuildSettings"
+          DependsOnTargets="GoEnsureMod;GoEnsureWorkspace;GoRestoreModules;GoPrepareBuildSettings"
           Inputs="@(_GoBuildInput)"
           Outputs="$(_GoBuildOutputs)">
     <MakeDir Directories="$(TargetDir);$(IntermediateOutputPath)" />
@@ -529,7 +582,10 @@ finally
           AfterTargets="GoBuild"
           Condition="'$(RunGoVet)' == 'true' And '$(DesignTimeBuild)' != 'true'"
           DependsOnTargets="GoPrepareBuildSettings">
-    <GoExec Command="go vet ./..."
+    <!-- $(_GoBuildArgs) rides along ("go vet" accepts build flags): vet must see
+         the same build context - tags, GoFlags - that GoBuild just compiled, or
+         it analyses a different file set than the one that was built. -->
+    <GoExec Command="go vet $(_GoBuildArgs) ./..."
             WorkingDirectory="$(MSBuildProjectDirectory)"
             EnvironmentVariables="@(_GoEnv)"
             ErrorCode="GOVET" />
@@ -553,8 +609,11 @@ finally
        fails the target, which fails dotnet test. Overrides/supplies the VSTest
        entry point the CLI invokes.
        ====================================================================== -->
-  <Target Name="VSTest" DependsOnTargets="GoEnsureMod;GoEnsureWorkspace;GoPrepareBuildSettings">
-    <GoExec Command="go test $(GoTestFlags) ./..."
+  <Target Name="VSTest" DependsOnTargets="GoEnsureMod;GoEnsureWorkspace;GoRestoreModules;GoPrepareBuildSettings">
+    <!-- $(_GoBuildArgs) rides along ("go test" accepts build flags): the test
+         binary must be compiled with the same tags/GoFlags as the build, or
+         DefineConstants-gated code is tested against the wrong file set. -->
+    <GoExec Command="go test $(_GoBuildArgs) $(GoTestFlags) ./..."
             WorkingDirectory="$(MSBuildProjectDirectory)"
             EnvironmentVariables="@(_GoEnv)"
             ErrorCode="GOTEST" />
@@ -567,9 +626,12 @@ finally
        there is no managed payload to lay out, and depending on Build would
        only produce a host-OS binary that publish does not use.
        ====================================================================== -->
+  <!-- Explicit GoOS/GoArch fill the gap for RIDs outside the built-in map
+       (e.g. -r freebsd-x64 -p:GoOS=freebsd -p:GoArch=amd64), so the error only
+       fires when the effective value would end up empty. -->
   <Target Name="_GoValidatePublishRid" Condition="'$(RuntimeIdentifier)' != ''">
-    <Error Condition="'$(_GoRidOS)' == '' Or '$(_GoRidArch)' == ''"
-           Text="Orika.NET.Sdk: RuntimeIdentifier '$(RuntimeIdentifier)' has no GOOS/GOARCH mapping. Supported RIDs: win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, osx-arm64." />
+    <Error Condition="('$(_GoRidOS)' == '' And '$(GoOS)' == '') Or ('$(_GoRidArch)' == '' And '$(GoArch)' == '')"
+           Text="Orika.NET.Sdk: RuntimeIdentifier '$(RuntimeIdentifier)' has no GOOS/GOARCH mapping. Supported RIDs: win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, osx-arm64 - or set GoOS/GoArch explicitly." />
   </Target>
 
   <Target Name="_GoPreparePublishSettings" DependsOnTargets="GoPrepareBuildSettings">
@@ -592,7 +654,7 @@ finally
   </Target>
 
   <PropertyGroup>
-    <GoPublishDependsOn>_GoValidatePublishRid;GoEnsureMod;GoEnsureWorkspace;_GoPreparePublishSettings</GoPublishDependsOn>
+    <GoPublishDependsOn>_GoValidatePublishRid;GoEnsureMod;GoEnsureWorkspace;GoRestoreModules;_GoPreparePublishSettings</GoPublishDependsOn>
   </PropertyGroup>
 
   <Target Name="Publish"

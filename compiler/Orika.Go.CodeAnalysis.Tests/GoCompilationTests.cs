@@ -67,6 +67,24 @@ public class GoCompilationTests
     }
 
     [Fact]
+    public void Emit_BuildErrorAfterMultibyteText_ReportsUtf16Column()
+    {
+        using var module = new TempGoModule();
+        // 第 6 行:\tfmt.Println("你好世界", undefinedVar)
+        // undefinedVar 位於位元組欄 30(你好世界 佔 12 位元組),UTF-16 欄 22。
+        module.WriteFile("main.go",
+            "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"你好世界\", undefinedVar)\n}\n");
+
+        var compilation = GoCompilation.Create(module.Directory);
+        var result = compilation.Emit(Path.Combine(module.Directory, "out.exe"));
+
+        Assert.False(result.Success);
+        var diag = Assert.Single(result.Diagnostics, d => d.Message.Contains("undefinedVar"));
+        Assert.Equal(6, diag.Location.Line);
+        Assert.Equal(22, diag.Location.Column);
+    }
+
+    [Fact]
     public void Emit_ValidModule_ProducesExecutableThatPrintsExpectedOutput()
     {
         using var module = new TempGoModule();

@@ -1,11 +1,14 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -165,15 +168,33 @@ func samePath(a, b string) bool {
 	return a == b
 }
 
+// resolvePath makes file absolute. Relative positions (go list reports
+// ListError positions relative to cfg.Dir) are resolved against the
+// loader's directory, NOT the process working directory: the sidecar is
+// spawned by the C# host with whatever cwd Visual Studio happens to have,
+// so filepath.Abs would fabricate paths to nonexistent files.
+func (l *loader) resolvePath(file string) string {
+	if file == "" || filepath.IsAbs(file) {
+		return filepath.Clean(file)
+	}
+	return filepath.Join(l.dir, file)
+}
+
+// inModule reports whether file (already resolved) lives under the
+// loader's directory.
+func (l *loader) inModule(file string) bool {
+	rel, err := filepath.Rel(l.dir, file)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // addDiag records a diagnostic. line/col arrive as go/token reports them
 // (1-based, column counted in bytes) and are stored in the protocol's
 // unit: 1-based UTF-16 code units.
 func (l *loader) addDiag(file string, line, byteCol int, msg string) {
-	if file != "" {
-		if abs, err := filepath.Abs(file); err == nil {
-			file = abs
-		}
-	}
+	file = l.resolvePath(file)
 	col := byteCol
 	if col > 0 {
 		col = l.lines.toUTF16Col(file, line, byteCol)
@@ -223,19 +244,58 @@ func (l *loader) checkModule() ([]diagnostic, error) {
 	cfg := l.opts.config(l.dir, l.fset, false)
 	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
-		return nil, fmt.Errorf("loading packages in %s: %w", l.dir, err)
+		// Infrastructure error only when the toolchain could not run at
+		// all (missing go binary) or the arguments were bad (no such
+		// directory). Everything else - typically a malformed go.mod that
+		// makes `go list` exit before listing - is bad SOURCE, which the
+		// contract says is data: report it as a diagnostic against go.mod
+		// and exit 0, instead of blowing up the C# host mid-edit.
+		var execErr *exec.Error
+		if _, statErr := os.Stat(l.dir); statErr != nil || errors.As(err, &execErr) {
+			return nil, fmt.Errorf("loading packages in %s: %w", l.dir, err)
+		}
+		line := 1
+		if m := goModLineRe.FindStringSubmatch(err.Error()); m != nil {
+			if n, convErr := strconv.Atoi(m[1]); convErr == nil {
+				line = n
+			}
+		}
+		l.addDiag(filepath.Join(l.dir, "go.mod"), line, 0, strings.TrimSpace(err.Error()))
+		return l.sortedDiags(), nil
 	}
 
-	// Only packages belonging to the loaded patterns are reported;
-	// problems inside dependencies surface on the importing package as an
-	// import error, which is what a user of this module can act on.
+	// Top-level packages report all their errors. Dependency packages are
+	// visited too - go list attaches the actionable "no required module
+	// provides package X; to add it: go get X" ListError (positioned at the
+	// import site) to the dependency's STUB package, not to the importer -
+	// but only their errors positioned inside this module are taken, so a
+	// broken third-party dependency does not flood the Error List with
+	// positions the user cannot act on.
+	topLevel := map[*packages.Package]bool{}
 	for _, pkg := range pkgs {
+		topLevel[pkg] = true
+	}
+	packages.Visit(pkgs, nil, func(pkg *packages.Package) {
 		for _, e := range pkg.Errors {
 			file, line, col := parsePackagesPos(e.Pos)
+			if !topLevel[pkg] {
+				if file == "" || !l.inModule(l.resolvePath(file)) {
+					continue
+				}
+			}
 			l.addDiag(file, line, col, e.Msg)
 		}
-	}
+	})
 
+	return l.sortedDiags(), nil
+}
+
+// goModLineRe pulls the line number out of `go list`'s "go.mod:5: unknown
+// directive" style messages so the diagnostic lands on the offending line.
+var goModLineRe = regexp.MustCompile(`go\.mod:(\d+)`)
+
+// sortedDiags returns the accumulated diagnostics in stable position order.
+func (l *loader) sortedDiags() []diagnostic {
 	sort.SliceStable(l.diags, func(i, j int) bool {
 		a, b := l.diags[i], l.diags[j]
 		if a.File != b.File {
@@ -252,5 +312,5 @@ func (l *loader) checkModule() ([]diagnostic, error) {
 	if l.diags == nil {
 		l.diags = []diagnostic{}
 	}
-	return l.diags, nil
+	return l.diags
 }

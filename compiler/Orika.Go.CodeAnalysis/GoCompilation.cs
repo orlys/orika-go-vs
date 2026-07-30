@@ -198,7 +198,9 @@ public sealed partial class GoCompilation
             _ => GoDiagnosticSeverity.Error,
         };
 
-    [GeneratedRegex(@"^(?<file>.+?\.go):(?<line>\d+):(?:(?<col>\d+):)?\s*(?<msg>.+)$")]
+    // 副檔名集合與 SDK 的 @(GoNativeCompile) 一致:cgo 建置會原封轉發
+    // C/C++/ObjC/Fortran 編譯器的「helper.cpp:3:5: error: ...」診斷行。
+    [GeneratedRegex(@"^(?<file>.+?\.(?:go|swigcxx|swig|sx|s|S|cxx|cpp|cc|c|hxx|hpp|hh|h|mm|m|f90|for|F|f)):(?<line>\d+):(?:(?<col>\d+):)?\s*(?<msg>.+)$")]
     private static partial Regex GoBuildErrorLine();
 
     private List<GoDiagnostic> ParseGoBuildOutput(string stderr)
@@ -208,6 +210,11 @@ public sealed partial class GoCompilation
         {
             return diagnostics;
         }
+
+        // go build 的欄號是位元組欄,而本組件的契約是所有欄號一律 UTF-16
+        // 字碼單位(見 GoLocation)——sidecar 的 parse/check 已轉換,這裡是
+        // 唯一直接消費 go 工具鏈 stderr 的路徑,必須自己轉。
+        var lineCache = new Dictionary<string, byte[][]?>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var rawLine in stderr.Split('\n'))
         {
@@ -233,6 +240,7 @@ public sealed partial class GoCompilation
             var colNo = match.Groups["col"].Success
                 ? int.Parse(match.Groups["col"].Value, System.Globalization.CultureInfo.InvariantCulture)
                 : 0;
+            colNo = ToUtf16Column(lineCache, file, lineNo, colNo);
 
             diagnostics.Add(new GoDiagnostic(
                 "GOBUILD",
@@ -242,5 +250,94 @@ public sealed partial class GoCompilation
         }
 
         return diagnostics;
+    }
+
+    /// <summary>
+    /// 把 go/token 的 1-based 位元組欄號轉成 1-based UTF-16 字碼單位欄號,
+    /// 與 orika-goc 的 toUTF16Col 同一套規則:無法解析的欄號原樣返回(純
+    /// ASCII 時本來就相等);行首 UTF-8 BOM 佔 3 個位元組但 0 個 UTF-16 單位
+    /// (VS/.NET 的緩衝區會剝掉它)。
+    /// </summary>
+    private static int ToUtf16Column(Dictionary<string, byte[][]?> cache, string file, int line, int byteCol)
+    {
+        if (byteCol <= 1 || line < 1)
+        {
+            return byteCol;
+        }
+
+        if (!cache.TryGetValue(file, out var lines))
+        {
+            try
+            {
+                lines = SplitLines(File.ReadAllBytes(file));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException)
+            {
+                lines = null; // 記住「讀不到」,不再重試。
+            }
+            cache[file] = lines;
+        }
+
+        if (lines is null || line > lines.Length)
+        {
+            return byteCol;
+        }
+
+        var src = lines[line - 1];
+        var n = byteCol - 1;
+        if (n > src.Length)
+        {
+            // 超出行尾(例如指向最後一個 token 之後):算整行再保留溢出量。
+            return Utf16Length(src) + 1 + (n - src.Length);
+        }
+        return Utf16Length(src.AsSpan(0, n)) + 1;
+    }
+
+    /// <summary>與 orika-goc 的 splitLines 對齊:LF/CRLF 皆處理,行不含結尾符。</summary>
+    private static byte[][] SplitLines(byte[] src)
+    {
+        var lines = new List<byte[]>(16);
+        var start = 0;
+        for (var i = 0; i < src.Length; i++)
+        {
+            if (src[i] != (byte)'\n')
+            {
+                continue;
+            }
+            var end = i;
+            if (end > start && src[end - 1] == (byte)'\r')
+            {
+                end--;
+            }
+            lines.Add(src[start..end]);
+            start = i + 1;
+        }
+        lines.Add(src[start..]);
+        return [.. lines];
+    }
+
+    /// <summary>
+    /// 計算 bytes 需要的 UTF-16 字碼單位數。無效 UTF-8 以取代字元計數;
+    /// 開頭的 U+FEFF(BOM)計為 0 單位,理由同 orika-goc 的 utf16Len。
+    /// </summary>
+    private static int Utf16Length(ReadOnlySpan<byte> bytes)
+    {
+        var n = 0;
+        var atStart = true;
+        while (!bytes.IsEmpty)
+        {
+            System.Text.Rune.DecodeFromUtf8(bytes, out var rune, out var consumed);
+            if (consumed <= 0)
+            {
+                consumed = 1;
+            }
+            if (!(atStart && rune.Value == 0xFEFF))
+            {
+                n += rune.Utf16SequenceLength;
+            }
+            atStart = false;
+            bytes = bytes[consumed..];
+        }
+        return n;
     }
 }

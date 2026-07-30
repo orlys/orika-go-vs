@@ -97,10 +97,20 @@ func splitLines(src []byte) [][]byte {
 // utf16Len counts the UTF-16 code units needed for b. Bytes that are not
 // valid UTF-8 count as one unit each, mirroring how a decoder that
 // substitutes U+FFFD would see them.
+//
+// A leading U+FEFF counts as ZERO units: it is the UTF-8 BOM (only line 1
+// of a BOM file can start with it - go/scanner rejects a BOM anywhere
+// else), its 3 bytes DO count in go/token's byte columns, but .NET and
+// Visual Studio strip it from the buffer, so it must not shift the
+// UTF-16 columns.
 func utf16Len(b []byte) int {
 	n := 0
 	for i := 0; i < len(b); {
 		r, size := utf8.DecodeRune(b[i:])
+		if r == 0xFEFF && i == 0 {
+			i += size
+			continue
+		}
 		if r > 0xFFFF {
 			n += 2 // surrogate pair
 		} else {
@@ -136,7 +146,9 @@ func (x *lineIndex) toUTF16Col(path string, line, byteCol int) int {
 // of path into the 1-based byte column go/token uses. Unresolvable
 // columns are returned unchanged.
 func (x *lineIndex) toByteCol(path string, line, utf16Col int) int {
-	if utf16Col <= 1 {
+	// Column 1 is NOT shortcut: on a BOM line the editor's column 1 is
+	// go/token's byte column 4, so even that needs the conversion below.
+	if utf16Col < 1 {
 		return utf16Col
 	}
 	src := x.line(path, line)
@@ -145,6 +157,12 @@ func (x *lineIndex) toByteCol(path string, line, utf16Col int) int {
 	}
 	want := utf16Col - 1 // UTF-16 units to skip
 	units, i := 0, 0
+	// Mirror of utf16Len's BOM rule: the BOM occupies 3 bytes of go/token's
+	// byte columns but zero UTF-16 units of the editor's, so skip it before
+	// counting.
+	if len(src) >= 3 && src[0] == 0xEF && src[1] == 0xBB && src[2] == 0xBF {
+		i = 3
+	}
 	for i < len(src) && units < want {
 		r, size := utf8.DecodeRune(src[i:])
 		if r > 0xFFFF {

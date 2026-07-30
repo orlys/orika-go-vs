@@ -76,9 +76,12 @@ catch (Exception)
 
 Log.LogMessage(MessageImportance.Low, Command);
 
-// file:line[:col]: message  - the Go toolchain's diagnostic format.
+// file:line[:col]: message  - the Go toolchain's diagnostic format. The
+// extension set mirrors @(GoNativeCompile) in Sdk.props: cgo builds forward
+// the C/C++/ObjC/Fortran compiler's "helper.cpp:3:5: error: ..." lines
+// verbatim, and those must navigate from the Error List too.
 Regex diagRegex = new Regex(
-    @"^(?<file>(?:[A-Za-z]:)?[^:\r\n]*?\.(?:go|s|S|c|h)):(?<line>\d+)(?::(?<col>\d+))?:\s*(?<msg>.*)$",
+    @"^(?<file>(?:[A-Za-z]:)?[^:\r\n]*?\.(?:go|swigcxx|swig|sx|s|S|cxx|cpp|cc|c|hxx|hpp|hh|h|mm|m|f90|for|F|f)):(?<line>\d+)(?::(?<col>\d+))?:\s*(?<msg>.*)$",
     RegexOptions.CultureInvariant);
 
 // ------------------------------------------------------------------
@@ -93,11 +96,12 @@ Regex diagRegex = new Regex(
 // ------------------------------------------------------------------
 Dictionary<string, string> nameIndex = null;
 
-Func<string, bool> isSourceExt = ext =>
-    ext.Equals(".go", StringComparison.OrdinalIgnoreCase) ||
-    ext.Equals(".s", StringComparison.OrdinalIgnoreCase) ||
-    ext.Equals(".c", StringComparison.OrdinalIgnoreCase) ||
-    ext.Equals(".h", StringComparison.OrdinalIgnoreCase);
+HashSet<string> sourceExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+{
+    ".go", ".s", ".sx", ".c", ".cc", ".cpp", ".cxx", ".m", ".mm",
+    ".h", ".hh", ".hpp", ".hxx", ".f", ".for", ".f90", ".swig", ".swigcxx",
+};
+Func<string, bool> isSourceExt = ext => sourceExts.Contains(ext);
 
 Func<string, string> lookupByName = name =>
 {

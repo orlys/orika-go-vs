@@ -12,3 +12,6 @@ packages/
 *.exe
 *.test
 vendor/
+
+# Serena MCP tool state
+.serena/
