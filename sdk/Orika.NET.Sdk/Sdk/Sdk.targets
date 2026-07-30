@@ -37,6 +37,17 @@
        expects; the managed language targets normally import it. -->
   <Import Project="$(MSBuildToolsPath)\Microsoft.Managed.targets" Condition="'$(MSBuildAssemblyVersion)' >= '16.0' And '$(ManagedLanguageTargetsGotImported)' != 'true'" />
 
+  <!-- Microsoft.Managed.DesignTime.targets adds PackageReferences whenever
+       RestoreProjectStyle is PackageReference (which this SDK sets to keep
+       restore quiet). That capability is what lights up NuGet's UI - 管理
+       NuGet 套件, the Packages node - and a Go module takes dependencies
+       through go.mod (GoModuleReference), never NuGet, so it is removed
+       here, AFTER the import that added it. Restore itself still runs;
+       only the UI affordances go away. -->
+  <ItemGroup>
+    <ProjectCapability Remove="PackageReferences" />
+  </ItemGroup>
+
   <!-- ======================================================================
        Static computed properties
        ====================================================================== -->

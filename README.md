@@ -45,6 +45,8 @@ SDK 內部會匯入 `Microsoft.NET.Sdk`（讓 Visual Studio 能載入專案、`d
 
 也可以不用手寫：在 Solution Explorer 的 **Go 專案節點上按右鍵 →「加入 Go 模組參考…」**，輸入模組路徑與版本（留空＝最新版）即可。命令由 VSIX 的 `OrikaGoPackage` 提供，只在具 `OrikaGo` capability 的專案（`.goproj`）上出現；同一模組已有參考時會就地更新 `Version`。寫入後 CPS 因 `HandlesOwnReload` 自動重載專案，下次建置由 `GoRestoreModules` 以 `go get` 解析。
 
+Go 專案的相依一律走 go.mod——**NuGet 對 `.goproj` 是關閉的**：SDK 在 import 後移除 `PackageReferences` capability（它因 `RestoreProjectStyle=PackageReference` 而被 Managed.DesignTime.targets 自動加入），「管理 NuGet 套件」等 UI 不會出現在 Go 專案上；restore 本身保留以維持 SDK 解析與設計階段建置。
+
 另外，`Configuration` 也會影響編譯旗標：
 
 - **Debug**：`-gcflags "all=-N -l"`（停用最佳化與內嵌，利於除錯）。
@@ -230,6 +232,20 @@ Console.WriteLine(result.Success);
 ```
 
 診斷代碼：`GOPARSE`（語法錯誤）、`GOTYPE`（型別檢查錯誤）、`GOBUILD`（`go build` 失敗）。位置皆為 1-based 行／欄；**欄號的單位是 UTF-16 字碼單位**（詳見下方「編譯器平台的正確性修正」）。
+
+## F5 偵錯（delve 整合）
+
+`.goproj` 專案按 **F5** 即以 [delve](https://github.com/go-delve/delve) 偵錯:中斷點、逐步執行（F10/F11）、區域變數、呼叫堆疊與 goroutine 都由 DAP 供應。**Ctrl+F5**（啟動但不偵錯）直接執行建置產物,不經 delve。
+
+架構（與 VS 內建的 CMake 偵錯同一套機制）:
+
+- **launch 端**:`GoDebugLaunchProvider`（CPS 的 `IDebugLaunchProvider`,`AppliesTo("OrikaGo")`）在 F5 時啟動 `dlv dap --listen=127.0.0.1:0`,解析它回報的 port,組出 launch 設定（`mode:"exec"`、program=`GoOutputPath`、args=`StartArguments` 拆陣列、cwd=專案目錄）。
+- **engine 端**:`goproj.pkgdef` 於 `AD7Metrics\Engine` 註冊 Go engine,`CLSID` 指向 VS **Debug Adapter Host** 的固定實作;launch 設定中的 `$debugServer` 讓 host 直接連 dlv 的 TCP port——**不設 `"Adapter"`**,因為 `dlv dap` 只支援 TCP、不支援 stdio,由 host spawn 會在握手時卡死。
+- **除錯資訊**:Debug 組態本來就以 `-gcflags "all=-N -l"` 編譯（見「支援的屬性」),符號與區域變數完整,SDK 端無須任何改動。
+- **dlv 探測**:與 gopls 同一套 `GoToolLocator`（PATH → GOBIN/GOPATH\bin 含 `go env -w` 持久值 → `%USERPROFILE%\go\bin`);找不到時錯誤訊息給出 `go install github.com/go-delve/delve/cmd/dlv@latest`。
+- **生命週期**:dlv dap 是單一會話伺服器,session 結束自動退出;連線失敗殘留的伺服器會在下一次 F5 前被回收。
+
+已知限制:engine 註冊關閉 `Exceptions` 與 `SetNextStatement`——delve 的 DAP 未實作 VS 式例外篩選與「設定下一個陳述式」。
 
 ## gopls 在 .go 檔案上的啟用（LSP 內容類型接線）
 

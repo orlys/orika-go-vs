@@ -52,9 +52,11 @@
   <ItemGroup>
     <Compile Include="AddModuleReferenceDialog.cs" />
     <Compile Include="GoContentTypeDefinitions.cs" />
+    <Compile Include="GoDebugLaunchProvider.cs" />
     <Compile Include="GoImageMonikers.cs" />
     <Compile Include="GoLanguageClient.cs" />
     <Compile Include="GoProjectTreeIconProvider.cs" />
+    <Compile Include="GoToolLocator.cs" />
     <Compile Include="OrikaGoPackage.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
