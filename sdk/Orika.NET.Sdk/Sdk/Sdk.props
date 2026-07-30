@@ -18,8 +18,10 @@
     <AssemblyName Condition="'$(AssemblyName)' == ''">$(MSBuildProjectName)</AssemblyName>
     <!-- Same sanitization as the templates' goModuleSafe form: a VS-legal
          project name ("My App", "應用") is not a legal Go module path, and the
-         default must never hand "go mod init" a name it rejects. -->
-    <GoModuleName Condition="'$(GoModuleName)' == ''">$([System.Text.RegularExpressions.Regex]::Replace('$(AssemblyName)', '[^A-Za-z0-9._~-]', '_').Trim('.'))</GoModuleName>
+         default must never hand "go mod init" a name it rejects. Lowercased
+         first, per Go convention (module paths and package names are all
+         lowercase). -->
+    <GoModuleName Condition="'$(GoModuleName)' == ''">$([System.Text.RegularExpressions.Regex]::Replace('$(AssemblyName.ToLowerInvariant())', '[^A-Za-z0-9._~-]', '_').Trim('.'))</GoModuleName>
 
     <!-- Microsoft.NET.Sdk sets this only for .cs/.vb/.fsproj. A .goproj leaves it
          empty, which is what tells Sdk.targets to wire up the CPS design-time

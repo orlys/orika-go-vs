@@ -50,7 +50,7 @@
     },
     "goModuleSafe": {
       "identifier": "chain",
-      "steps": [ "goModuleChars", "goModuleCollapse", "goModuleTrimDots" ]
+      "steps": [ "lc", "goModuleChars", "goModuleCollapse", "goModuleTrimDots" ]
     }
   },
   "symbols": {
@@ -59,7 +59,7 @@
       "valueSource": "name",
       "valueTransform": "goModuleSafe",
       "replaces": "GO_MODULE_NAME",
-      "description": "go.mod 的 module 路徑：專案名稱經 ASCII 淨化（Go 模組路徑禁止非 ASCII 字元，非法字元以 _ 取代）。"
+      "description": "go.mod 的 module 路徑：專案名稱的小寫形式經 ASCII 淨化（Go 慣例 module 路徑全小寫；非法字元以 _ 取代）。"
     },
     "langVersion": {
       "type": "parameter",

@@ -159,6 +159,8 @@ SDK 原始檔位於 `sdk/Orika.NET.Sdk/`。修改後執行：
 | `go-console` | Orika Go 主控台應用程式 | `.goproj` + `go.mod` + `main.go`，建置後產生可執行檔 |
 | `go-lib` | Orika Go 類別庫 | `OutputType=Library`，`go build ./...` 只做編譯檢查；Go package 名稱為專案名稱的小寫 |
 
+依 Go 慣例（module 路徑與 package 名稱全小寫），兩個範本產出的 `go.mod` module 名稱與 `go-lib` 的 package 名稱都是**專案名稱的小寫形式**（`MyApp` → `module myapp`、`MyLib` → `package mylib`）；SDK 端 `GoEnsureMod` 的 `go mod init` 預設名稱同樣先轉小寫再淨化（`MyCased App` → `module mycased_app`）。`.goproj` 檔名與 `AssemblyName`（輸出的執行檔名）維持使用者輸入的大小寫。
+
 打包與安裝（於存放庫根目錄）：
 
 ```powershell
