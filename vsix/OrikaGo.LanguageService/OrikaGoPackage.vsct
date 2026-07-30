@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Command table for the OrikaGo package.
+
+  One command: "加入 Go 模組參考..." on the project-node context menu.
+  DefaultInvisible + DynamicVisibility + the VisibilityConstraints entry keep
+  it hidden until the uiContextGoProject UI context is active; that context is
+  turned on by the ProvideUIContextRule on OrikaGoPackage when the ACTIVE
+  project has the OrikaGo capability, so the shell shows/hides the item
+  correctly without ever loading the package. The package only loads when the
+  command is actually invoked.
+-->
+<CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <Extern href="stdidcmd.h" />
+  <Extern href="vsshlids.h" />
+
+  <Commands package="guidOrikaGoPackage">
+    <Groups>
+      <Group guid="guidOrikaGoCmdSet" id="grpProjectContext" priority="0x0200">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_PROJNODE" />
+      </Group>
+    </Groups>
+
+    <Buttons>
+      <Button guid="guidOrikaGoCmdSet" id="cmdidAddGoModuleReference" priority="0x0100" type="Button">
+        <Parent guid="guidOrikaGoCmdSet" id="grpProjectContext" />
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <Strings>
+          <ButtonText>加入 Go 模組參考(&amp;M)...</ButtonText>
+        </Strings>
+      </Button>
+    </Buttons>
+  </Commands>
+
+  <VisibilityConstraints>
+    <VisibilityItem guid="guidOrikaGoCmdSet" id="cmdidAddGoModuleReference" context="uiContextGoProject" />
+  </VisibilityConstraints>
+
+  <Symbols>
+    <GuidSymbol name="guidOrikaGoPackage" value="{9C4E9A2B-7D31-4F5C-A1E8-52B60D3F8E74}" />
+    <GuidSymbol name="guidOrikaGoCmdSet" value="{1F6D3B85-42A9-4E0C-9B7D-E85C2A94F316}">
+      <IDSymbol name="grpProjectContext" value="0x1010" />
+      <IDSymbol name="cmdidAddGoModuleReference" value="0x0100" />
+    </GuidSymbol>
+    <!-- Must match OrikaGoPackage.UiContextGuidString. -->
+    <GuidSymbol name="uiContextGoProject" value="{A7B54C29-8E13-4D6F-92A5-3D1E7F60C8B2}" />
+  </Symbols>
+</CommandTable>

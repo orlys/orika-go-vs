@@ -43,6 +43,8 @@ SDK 內部會匯入 `Microsoft.NET.Sdk`（讓 Visual Studio 能載入專案、`d
 
 冪等規則與 `LangVersion` 相同：`go.mod` 已含該模組（且版本吻合）時完全不執行 `go get`，`go.mod` 的 mtime 不變，不會破壞增量建置。改變 `Version` 會重新解析；**移除**參考不會從 `go.mod` 移除 require——那是 `go mod tidy` 的職責。
 
+也可以不用手寫：在 Solution Explorer 的 **Go 專案節點上按右鍵 →「加入 Go 模組參考…」**，輸入模組路徑與版本（留空＝最新版）即可。命令由 VSIX 的 `OrikaGoPackage` 提供，只在具 `OrikaGo` capability 的專案（`.goproj`）上出現；同一模組已有參考時會就地更新 `Version`。寫入後 CPS 因 `HandlesOwnReload` 自動重載專案，下次建置由 `GoRestoreModules` 以 `go get` 解析。
+
 另外，`Configuration` 也會影響編譯旗標：
 
 - **Debug**：`-gcflags "all=-N -l"`（停用最佳化與內嵌，利於除錯）。
