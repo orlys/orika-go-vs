@@ -405,3 +405,5 @@ epic/
 **腳本**：`install-vsix.ps1 -NoBuild` 不再要求 extension development workload——它只需要每個 VS 版本都有的 `VSIXInstaller.exe`;workload 檢查僅在需要 MSBuild 建置時執行。
 
 驗證：compiler 測試 26/26（含新增的 Emit UTF-16 欄號測試）;workspace stale binary、`-tags` 進 test/vet、freebsd publish override、`My App` 淨化、GoWorkUse 工具鏈切換、orika-goc 四個場景（相對路徑、缺 require、壞 go.mod、BOM）皆以實際重現腳本在修正前後比對確認。
+
+**後續使用者回報**：Solution Explorer 必須按「Show All Files」才看得到 `main.go`。根因在 `Microsoft.NET.Sdk.DefaultItems.props`——它先 `None Include="**/*"` 再 `None Remove="**/*$(DefaultLanguageSourceExtension)"` 把語言原始碼從 None 移走；`.goproj` 沒有語言 props,該屬性是**空字串**,`Remove` 變成 `**/*`,把剛建好的整個 None 清單抹掉,專案因此**沒有任何項目**。修正：`Sdk.props` 在巢狀 import 之後以相同的 Exclude 重跑一次 None glob（`-getItem:None` 由空清單變為完整檔案清單,含 `main.go`／`go.mod`／`go.work`）。

@@ -72,11 +72,22 @@
     <ProjectCapability Include="OrikaGo" />
   </ItemGroup>
 
+  <!-- Microsoft.NET.Sdk.DefaultItems.props includes None="**/*" and then runs
+       None Remove="**/*$(DefaultLanguageSourceExtension)" to keep language
+       sources out of it. A .goproj imports no language props, so that
+       extension is EMPTY and the removal is "**/*" - it wipes the None list
+       it just built, leaving Solution Explorer with no project items at all
+       (every file needed "Show All Files"). Re-running the same glob here,
+       after the wipe, restores the intended "None shows everything" display. -->
+  <ItemGroup Condition="'$(EnableDefaultItems)' == 'true' And '$(EnableDefaultNoneItems)' == 'true'">
+    <None Include="**/*" Exclude="$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder)" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- Build inputs for the Go toolchain (also drive MSBuild incrementality).
-         Visible="false": the same files are already displayed in Solution Explorer
-         through Microsoft.NET.Sdk's default None glob (None Include="**/*"), so a
-         visible GoCompile item would show every .go file twice. -->
+         Visible="false": the same files are displayed in Solution Explorer
+         through the restored None glob above, so a visible GoCompile item
+         would show every .go file twice. -->
     <GoCompile Include="**/*.go"
                Exclude="$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder);bin/**;obj/**"
                Visible="false" />
