@@ -519,6 +519,16 @@ finally
        Shared argument/environment computation for build, vet and test.
        ====================================================================== -->
   <Target Name="GoPrepareBuildSettings">
+    <!-- The effective toolchain version participates in the up-to-date check:
+         GOTOOLCHAIN can change (go env -w, env var) without touching any
+         input file, and a binary built by the previous toolchain would
+         otherwise be silently reused. -->
+    <Exec Command="go version"
+          ConsoleToMSBuild="true"
+          StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_GoToolchainVersion" />
+    </Exec>
+
     <ItemGroup>
       <!-- Item-splitting on $(DefineConstants) drops empty entries, so
            "FOO;;BAR;" still yields clean "-tags FOO,BAR". -->
@@ -545,7 +555,7 @@ finally
          up-to-date check; without this a stale binary is silently reused. -->
     <MakeDir Directories="$(IntermediateOutputPath)" />
     <WriteLinesToFile File="$(IntermediateOutputPath)go.build.args"
-                      Lines="$(_GoBuildArgs);@(_GoEnv)"
+                      Lines="$(_GoBuildArgs);@(_GoEnv);$(_GoToolchainVersion)"
                       Overwrite="true"
                       WriteOnlyWhenDifferent="true" />
 

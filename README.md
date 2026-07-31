@@ -260,7 +260,8 @@ Console.WriteLine(result.Success);
 - **命中次數中斷點**:`HitCountBP=1` + `HitCountBreakpointExpressions`(`== {0}`/`>= {0}`/`% {0}` 對映 dlv 的 hitCondition)
 - **反組譯/呼叫堆疊中斷點**:`AddressBP=1`/`CallStackBP=1`(dlv `supportsInstructionBreakpoints`)
 - **goroutine 降噪**:launch 設定 `hideSystemGoroutines:true`
-- **delve 版本**:升級至 1.27.0(解鎖 exceptionBreakpointFilters、hitCondition capability、記憶體讀寫);dlv 以 `--check-go-version=false` 啟動——delve 只「支援」最近兩個 Go 版本,否則舊工具鏈建置的二進位會被硬拒(modal 錯誤)。**建議本機 Go 工具鏈 ≥1.25 以獲得完整支援**(目前 1.21.5 會顯示 WARNING 但功能正常)
+- **delve 版本**:升級至 1.27.0(解鎖 exceptionBreakpointFilters、hitCondition capability、記憶體讀寫);dlv 以 `--check-go-version=false` 啟動——delve 只「支援」最近兩個 Go 版本,否則舊工具鏈建置的二進位會被硬拒(modal 錯誤)
+- **Go 工具鏈**:以 `go env -w GOTOOLCHAIN=go1.25.12+auto` 切至 1.25(官方機制,免重裝;二進位由 1.25 建置後 delve 的版本 WARNING 消失)。連帶處理:`orika-goc` 的 `x/tools` 升至 v0.48.0(v0.24 在 go1.25 下編譯失敗——token 內部布局改變)、gopls 升至新版(0.14.2 與 1.25 不匹配)、**工具鏈版本納入增量建置輸入**(`go version` 寫入 `go.build.args`,否則 GOTOOLCHAIN 切換後會靜默沿用舊工具鏈建置的二進位)。compiler 測試 26/26 於 1.25 下全數通過
 
 已知限制:`SetNextStatement`(拖移黃箭頭)關閉——delve 任何版本都未實作 DAP 的 `goto`,詳見規劃文件專節;`ExceptionConditions`(依模組略過例外)同因 delve 未支援而關閉。
 
