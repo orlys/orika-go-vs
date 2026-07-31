@@ -21,9 +21,20 @@ namespace OrikaGo.LanguageService
     /// build. The project declares HandlesOwnReload, so CPS picks up the edit
     /// without prompting.
     /// </summary>
-    [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
+    // RegisterUsing=CodeBase is load-bearing: the default emits only an
+    // assembly display name ("Assembly"="OrikaGo.LanguageService, ...,
+    // PublicKeyToken=null") into the pkgdef, which the shell cannot resolve
+    // for a non-GAC extension assembly - the package never loads and the
+    // CTMENU merge silently reads nothing. CodeBase pins
+    // "$PackageFolder$\OrikaGo.LanguageService.dll".
+    [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true, RegisterUsing = RegistrationMethod.CodeBase)]
     [Guid(PackageGuidString)]
-    [ProvideMenuResource("Menus.ctmenu", 1)]
+    // Version 2, not 1: version 1 was once installed while the ctmenu resource
+    // was missing from the assembly (no VSPackage.resx/MergeWithCTO yet), and
+    // the shell caches the merge PER VERSION - it never re-reads a version it
+    // has already processed, so the fixed resource stayed invisible until the
+    // version changed. Bump this whenever the vsct changes.
+    [ProvideMenuResource("Menus.ctmenu", 2)]
     // Lights up the vsct's uiContextGoProject when the ACTIVE project carries
     // the OrikaGo capability (declared by Orika.NET.Sdk), so the command only
     // appears on .goproj project nodes - evaluated by the shell without

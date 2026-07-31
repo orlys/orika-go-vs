@@ -65,6 +65,13 @@ if ($uninstall.ExitCode -notin 0, 1002) {
 $install = Start-Process $installer -ArgumentList '/quiet', "`"$vsix`"" -Wait -PassThru
 if ($install.ExitCode -ne 0) { throw "Install failed with exit code $($install.ExitCode)." }
 
+# Force the pkgdef/CTMENU caches to rebuild. Without this, a menu resource
+# whose version number did not change is served from the stale cache - the
+# exact failure mode that made a freshly fixed command table stay invisible.
+$devenv = Join-Path $vsPath 'Common7/IDE/devenv.exe'
+$update = Start-Process $devenv -ArgumentList '/updateconfiguration' -Wait -PassThru
+if ($update.ExitCode -ne 0) { Write-Warning "devenv /updateconfiguration exited with $($update.ExitCode)." }
+
 # Prove the deployed payload is the one just built, rather than trusting exit 0.
 $builtDll = Join-Path $repoRoot 'vsix/OrikaGo.LanguageService/bin/Release/OrikaGo.LanguageService.dll'
 $deployed = Get-ChildItem "$env:LOCALAPPDATA/Microsoft/VisualStudio/*/Extensions" -Recurse -Filter 'OrikaGo.LanguageService.dll' -ErrorAction SilentlyContinue

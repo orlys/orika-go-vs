@@ -22,6 +22,11 @@
          context registration pkgdef from its attributes. goproj.pkgdef (the
          hand-written project-type registration) ships alongside it. -->
     <GeneratePkgDefFile>true</GeneratePkgDefFile>
+    <!-- Emit "CodeBase"="$PackageFolder$\...dll" instead of a bare assembly
+         display name: a non-GAC, non-strong-named extension assembly cannot be
+         resolved by name, so without this the package never loads and the
+         CTMENU merge silently reads nothing (command absent from the table). -->
+    <RegisterWithCodebase>true</RegisterWithCodebase>
     <IncludeAssemblyInVSIXContainer>true</IncludeAssemblyInVSIXContainer>
     <IncludeDebugSymbolsInVSIXContainer>false</IncludeDebugSymbolsInVSIXContainer>
     <IncludeDebugSymbolsInLocalVSIXDeployment>false</IncludeDebugSymbolsInLocalVSIXDeployment>

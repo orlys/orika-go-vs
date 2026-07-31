@@ -247,7 +247,7 @@ Console.WriteLine(result.Success);
 
 已知限制:engine 註冊關閉 `Exceptions` 與 `SetNextStatement`——delve 的 DAP 未實作 VS 式例外篩選與「設定下一個陳述式」。
 
-端對端驗證(DTE 自動化,DAP 協定記錄佐證):`main.go` 設中斷點 → F5 → dlv 啟動、`setBreakpoints` 成功、`stopped(reason=breakpoint)` 實際命中;區域變數(含 `chan string 2/3` 這種 Go 原生型別)、呼叫堆疊(`main.main → runtime.main`)、goroutine 清單(`[Go 1..n]`)全部可見;改 `StartArguments` 重跑,於中斷點求值 `os.Args` 確認新參數 `["gamma","delta","epsilon"]` 生效;繼續執行至正常結束。另一個踩坑記錄:VSCT 編譯後必須靠 `VSPackage.resx` 的 `MergeWithCTO=true` 才會嵌進組件資源(`Menus.ctmenu`),缺了它命令永遠不出現且只在 ActivityLog 留下一行 `Error loading UI library`。
+端對端驗證(DTE 自動化,DAP 協定記錄佐證):`main.go` 設中斷點 → F5 → dlv 啟動、`setBreakpoints` 成功、`stopped(reason=breakpoint)` 實際命中;區域變數(含 `chan string 2/3` 這種 Go 原生型別)、呼叫堆疊(`main.main → runtime.main`)、goroutine 清單(`[Go 1..n]`)全部可見;改 `StartArguments` 重跑,於中斷點求值 `os.Args` 確認新參數 `["gamma","delta","epsilon"]` 生效;繼續執行至正常結束。另一個踩坑記錄(命令不出現的三連環,全中才會好):(1) VSCT 編譯後必須靠 `VSPackage.resx` 的 `MergeWithCTO=true` 才會嵌進組件資源(`Menus.ctmenu`);(2) 套件註冊必須 `RegisterWithCodebase=true`——預設只寫組件顯示名稱(`PublicKeyToken=null`),非 GAC 的擴充組件無從解析,shell 載不了套件、CTMENU 合併靜默讀到空;(3) shell 依 `Menus` 版本號快取合併結果,修好資源後必須把 `ProvideMenuResource` 版本 +1(或跑 `devenv /updateconfiguration`,`install-vsix.ps1` 現在每次安裝後都會跑)。驗證:`DTE.Commands.Item` 確認命令進入命令表,名稱 `ProjectandSolutionContextMenus.Project.加入Go模組參考`。
 
 ## gopls 在 .go 檔案上的啟用（LSP 內容類型接線）
 
