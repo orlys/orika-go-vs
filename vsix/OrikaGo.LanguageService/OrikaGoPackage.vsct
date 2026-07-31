@@ -16,23 +16,31 @@
   <Extern href="vsshlids.h" />
 
   <Commands package="guidOrikaGoPackage">
+    <Menus>
+      <!-- A PRIVATE context menu for the Go project's Dependencies root.
+           GoDependenciesContextMenuProvider maps the DependenciesRootNode tree
+           item here instead of the shell's shared IDM_VS_CTXT_REFERENCEROOT,
+           which is what removes "Add Project Reference...", "Manage NuGet
+           Packages..." and friends wholesale - they are placements on the
+           shared menu, unreachable one by one. -->
+      <Menu guid="guidOrikaGoCmdSet" id="menuGoDependenciesContext" type="Context" priority="0x0000">
+        <Strings>
+          <ButtonText>Go Dependencies</ButtonText>
+        </Strings>
+      </Menu>
+    </Menus>
+
     <Groups>
-      <!-- The Dependencies tree root maps to the shell's REFERENCEROOT context
-           menu (DependenciesContextMenuProvider in the managed project system
-           routes DependenciesRootNode there); 0x0150 slots the group between
-           the built-in Add group (0x0100) and Scope-to-This (0x0200). The
-           same menu serves legacy References nodes, but the uiContextGoProject
-           visibility constraint keeps this command Go-only. -->
-      <Group guid="guidOrikaGoCmdSet" id="grpDependenciesContext" priority="0x0150">
-        <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_REFERENCEROOT" />
+      <Group guid="guidOrikaGoCmdSet" id="grpDependenciesContext" priority="0x0100">
+        <Parent guid="guidOrikaGoCmdSet" id="menuGoDependenciesContext" />
       </Group>
     </Groups>
 
     <Buttons>
+      <!-- No visibility gymnastics needed: the only route to this menu is the
+           AppliesTo("OrikaGo") menu provider. -->
       <Button guid="guidOrikaGoCmdSet" id="cmdidAddGoModuleReference" priority="0x0100" type="Button">
         <Parent guid="guidOrikaGoCmdSet" id="grpDependenciesContext" />
-        <CommandFlag>DefaultInvisible</CommandFlag>
-        <CommandFlag>DynamicVisibility</CommandFlag>
         <!-- Default (en-us) strings are the fallback; language-specific sets
              below are picked by the IDE's UI language at ctmenu merge. -->
         <Strings>
@@ -48,13 +56,10 @@
     </Buttons>
   </Commands>
 
-  <VisibilityConstraints>
-    <VisibilityItem guid="guidOrikaGoCmdSet" id="cmdidAddGoModuleReference" context="uiContextGoProject" />
-  </VisibilityConstraints>
-
   <Symbols>
     <GuidSymbol name="guidOrikaGoPackage" value="{9C4E9A2B-7D31-4F5C-A1E8-52B60D3F8E74}" />
     <GuidSymbol name="guidOrikaGoCmdSet" value="{1F6D3B85-42A9-4E0C-9B7D-E85C2A94F316}">
+      <IDSymbol name="menuGoDependenciesContext" value="0x2000" />
       <IDSymbol name="grpDependenciesContext" value="0x1010" />
       <IDSymbol name="cmdidAddGoModuleReference" value="0x0100" />
     </GuidSymbol>

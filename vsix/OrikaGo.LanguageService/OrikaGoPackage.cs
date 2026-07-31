@@ -34,7 +34,7 @@ namespace OrikaGo.LanguageService
     // the shell caches the merge PER VERSION - it never re-reads a version it
     // has already processed, so the fixed resource stayed invisible until the
     // version changed. Bump this whenever the vsct changes.
-    [ProvideMenuResource("Menus.ctmenu", 3)]
+    [ProvideMenuResource("Menus.ctmenu", 4)]
     // Lights up the vsct's uiContextGoProject when the ACTIVE project carries
     // the OrikaGo capability (declared by Orika.NET.Sdk), so the command only
     // appears on .goproj project nodes - evaluated by the shell without
