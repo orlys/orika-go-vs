@@ -239,13 +239,15 @@ Console.WriteLine(result.Success);
 
 架構（與 VS 內建的 CMake 偵錯同一套機制）:
 
-- **launch 端**:`GoDebugLaunchProvider`（CPS 的 `IDebugLaunchProvider`,`AppliesTo("OrikaGo")`）在 F5 時啟動 `dlv dap --listen=127.0.0.1:0`,解析它回報的 port,組出 launch 設定（`mode:"exec"`、program=`GoOutputPath`、args=`StartArguments` 拆陣列、cwd=專案目錄）。
+- **launch 端**:`GoDebugLaunchProvider` 在 F5 時啟動 `dlv dap --listen=127.0.0.1:0`,解析它回報的 port,組出 launch 設定（`mode:"exec"`、program=`GoOutputPath`、args=`StartArguments` 拆陣列、cwd=專案目錄）。**它同時匯出兩個介面**:managed 專案系統的 `LaunchProfiles` 子系統擁有 F5 的底層設施(移除該 capability 會讓 `Debug.Start` 整個消失——實測),而其管線只諮詢 `IDebugProfileLaunchTargetsProvider`(依 `[Order]` 挑選、`SupportsProfile` 把關),plain 的 `IDebugLaunchProvider` 永遠不會被問——所以 provider 兩者都實作,前者才是實際被走到的路徑。該介面沒有可用的 NuGet 套件,從 VS 安裝目錄直接參考 `Microsoft.VisualStudio.ProjectSystem.Managed.VS.dll`(`Private=false`)。
 - **engine 端**:`goproj.pkgdef` 於 `AD7Metrics\Engine` 註冊 Go engine,`CLSID` 指向 VS **Debug Adapter Host** 的固定實作;launch 設定中的 `$debugServer` 讓 host 直接連 dlv 的 TCP port——**不設 `"Adapter"`**,因為 `dlv dap` 只支援 TCP、不支援 stdio,由 host spawn 會在握手時卡死。
 - **除錯資訊**:Debug 組態本來就以 `-gcflags "all=-N -l"` 編譯（見「支援的屬性」),符號與區域變數完整,SDK 端無須任何改動。
 - **dlv 探測**:與 gopls 同一套 `GoToolLocator`（PATH → GOBIN/GOPATH\bin 含 `go env -w` 持久值 → `%USERPROFILE%\go\bin`);找不到時錯誤訊息給出 `go install github.com/go-delve/delve/cmd/dlv@latest`。
 - **生命週期**:dlv dap 是單一會話伺服器,session 結束自動退出;連線失敗殘留的伺服器會在下一次 F5 前被回收。
 
 已知限制:engine 註冊關閉 `Exceptions` 與 `SetNextStatement`——delve 的 DAP 未實作 VS 式例外篩選與「設定下一個陳述式」。
+
+端對端驗證(DTE 自動化,DAP 協定記錄佐證):`main.go` 設中斷點 → F5 → dlv 啟動、`setBreakpoints` 成功、`stopped(reason=breakpoint)` 實際命中;區域變數(含 `chan string 2/3` 這種 Go 原生型別)、呼叫堆疊(`main.main → runtime.main`)、goroutine 清單(`[Go 1..n]`)全部可見;改 `StartArguments` 重跑,於中斷點求值 `os.Args` 確認新參數 `["gamma","delta","epsilon"]` 生效;繼續執行至正常結束。另一個踩坑記錄:VSCT 編譯後必須靠 `VSPackage.resx` 的 `MergeWithCTO=true` 才會嵌進組件資源(`Menus.ctmenu`),缺了它命令永遠不出現且只在 ActivityLog 留下一行 `Error loading UI library`。
 
 ## gopls 在 .go 檔案上的啟用（LSP 內容類型接線）
 

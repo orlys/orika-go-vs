@@ -65,6 +65,12 @@
       <ResourceName>Menus.ctmenu</ResourceName>
       <SubType>Designer</SubType>
     </VSCTCompile>
+    <!-- MergeWithCTO is what actually embeds the compiled vsct into the
+         assembly (as ...VSPackage.resources / Menus.ctmenu); see VSPackage.resx. -->
+    <EmbeddedResource Include="VSPackage.resx">
+      <MergeWithCTO>true</MergeWithCTO>
+      <ManifestResourceName>VSPackage</ManifestResourceName>
+    </EmbeddedResource>
   </ItemGroup>
   <ItemGroup>
     <None Include="source.extension.vsixmanifest">
@@ -93,6 +99,18 @@
     <Resource Include="Resources\GoFileNode.32.png" />
   </ItemGroup>
   <ItemGroup>
+    <!-- The managed project system's extension surface (IDebugProfileLaunchTargetsProvider,
+         ILaunchProfile) has no usable NuGet package (nuget.org stops at 2.x from 2017), so it
+         is referenced straight from the VS installation. Private=false: VS provides it at
+         runtime, it must not enter the VSIX payload. -->
+    <Reference Include="Microsoft.VisualStudio.ProjectSystem.Managed.VS">
+      <HintPath>$(VsInstallRoot)\Common7\IDE\Extensions\Microsoft\ManagedProjectSystem\Microsoft.VisualStudio.ProjectSystem.Managed.VS.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.VisualStudio.ProjectSystem.Managed">
+      <HintPath>$(VsInstallRoot)\Common7\IDE\Extensions\Microsoft\ManagedProjectSystem\Microsoft.VisualStudio.ProjectSystem.Managed.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Microsoft.Build" />
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />

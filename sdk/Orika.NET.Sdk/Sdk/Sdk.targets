@@ -46,6 +46,12 @@
        only the UI affordances go away. -->
   <ItemGroup>
     <ProjectCapability Remove="PackageReferences" />
+    <!-- LaunchProfiles stays: the managed project system's F5 plumbing (its
+         IVsDebuggableProjectCfg) lives in that subsystem - removing the
+         capability makes Debug.Start unavailable outright (verified). The
+         delve hookup rides the pipeline instead: the VSIX exports an
+         IDebugProfileLaunchTargetsProvider (GoDebugLaunchProvider), which is
+         the extension point that pipeline actually consults per profile. -->
   </ItemGroup>
 
   <!-- ======================================================================

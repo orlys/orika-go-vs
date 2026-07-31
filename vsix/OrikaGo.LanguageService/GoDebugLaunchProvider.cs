@@ -19,12 +19,33 @@ namespace OrikaGo.LanguageService
     /// goproj.pkgdef). Ctrl+F5 (NoDebug) runs the executable directly without
     /// delve. Breakpoints, stepping, locals and goroutine stacks all flow
     /// through DAP once the engine attaches - nothing per-feature to do here.
+    /// <para>
+    /// Exported BOTH ways because the pipelines differ: with the
+    /// LaunchProfiles capability (which the managed design-time targets bring,
+    /// and whose subsystem owns the project's F5 plumbing - removing it makes
+    /// Debug.Start unavailable outright), LaunchProfilesDebugLaunchProvider is
+    /// the only IDebugLaunchProvider ever consulted, and it delegates to the
+    /// highest-Order IDebugProfileLaunchTargetsProvider whose SupportsProfile
+    /// says yes. The plain IDebugLaunchProvider export covers the no-profiles
+    /// pipeline for completeness.
+    /// </para>
     /// </summary>
     [Export(typeof(IDebugLaunchProvider))]
+    [Export(typeof(IDebugProfileLaunchTargetsProvider))]
     [AppliesTo("OrikaGo")]
-    [Order(1000)]
-    internal sealed class GoDebugLaunchProvider : DebugLaunchProviderBase
+    [Order(9999999)] // must outrank every built-in provider or F5 silently goes elsewhere
+    internal sealed class GoDebugLaunchProvider : DebugLaunchProviderBase, IDebugProfileLaunchTargetsProvider
     {
+        /// <summary>Every profile of a .goproj debugs the Go binary via delve.</summary>
+        public bool SupportsProfile(ILaunchProfile profile) => true;
+
+        public Task OnBeforeLaunchAsync(DebugLaunchOptions launchOptions, ILaunchProfile profile) => Task.CompletedTask;
+
+        public Task OnAfterLaunchAsync(DebugLaunchOptions launchOptions, ILaunchProfile profile) => Task.CompletedTask;
+
+        public Task<IReadOnlyList<IDebugLaunchSettings>> QueryDebugTargetsAsync(DebugLaunchOptions launchOptions, ILaunchProfile profile)
+            => QueryDebugTargetsAsync(launchOptions);
+
         /// <summary>Engine GUID registered under AD7Metrics\Engine in goproj.pkgdef.</summary>
         public static readonly Guid DelveEngineGuid = new Guid("2A5D6E81-4C9B-45E2-B8F3-9D0C7A1E6F24");
 

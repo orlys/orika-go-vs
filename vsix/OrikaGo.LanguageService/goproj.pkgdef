@@ -43,3 +43,9 @@
 "Name"="Go Debugger (Delve)"
 "Language"="Go"
 "SuppressModulesRequestOnAttach"=dword:00000001
+
+// Claims .go files' breakpoints for this engine (same shape as the vsdbg and
+// CMake registrations; a null LanguageId is accepted - CMake ships one).
+[$RootKey$\AD7Metrics\Engine\{2A5D6E81-4C9B-45E2-B8F3-9D0C7A1E6F24}\LanguageMappings\Go]
+"LanguageId"="{00000000-0000-0000-0000-000000000000}"
+"Extensions"="*"

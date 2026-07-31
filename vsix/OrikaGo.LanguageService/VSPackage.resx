@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Merge target for the compiled command table: Microsoft.VsSDK.targets only
+  embeds the .cto produced from OrikaGoPackage.vsct when an EmbeddedResource
+  with MergeWithCTO=true / ManifestResourceName=VSPackage exists (the merged
+  result becomes OrikaGo.LanguageService.VSPackage.resources with a
+  "Menus.ctmenu" entry - what ProvideMenuResource("Menus.ctmenu", 1) loads).
+  Without this file the vsct compiles but never lands in the assembly and the
+  command silently never appears.
+-->
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+</root>
