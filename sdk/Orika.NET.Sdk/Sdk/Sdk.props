@@ -66,6 +66,14 @@
     <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
     <DisableImplicitFrameworkDefines>true</DisableImplicitFrameworkDefines>
 
+    <!-- A .goproj consumes no NuGet packages, and with the PackageReferences
+         capability removed (see Sdk.targets) Visual Studio's NuGet no longer
+         restores it - so obj/project.assets.json may legitimately never
+         exist. Skip ResolvePackageAssets (the official switch in
+         Microsoft.PackageDependencyResolution.targets), or every build in VS
+         fails with NETSDK1004 "Assets file ... not found". -->
+    <SkipResolvePackageAssets>true</SkipResolvePackageAssets>
+
     <NoWarn>$(NoWarn);NETSDK1085</NoWarn>
   </PropertyGroup>
 
