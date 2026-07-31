@@ -45,7 +45,11 @@ SDK 內部會匯入 `Microsoft.NET.Sdk`（讓 Visual Studio 能載入專案、`d
 
 也可以不用手寫：在 Solution Explorer 的 **Go 專案節點上按右鍵 →「加入 Go 模組參考…」**，輸入模組路徑與版本（留空＝最新版）即可。命令由 VSIX 的 `OrikaGoPackage` 提供，只在具 `OrikaGo` capability 的專案（`.goproj`）上出現；同一模組已有參考時會就地更新 `Version`。寫入後 CPS 因 `HandlesOwnReload` 自動重載專案，下次建置由 `GoRestoreModules` 以 `go get` 解析。
 
-Go 專案的相依一律走 go.mod——**NuGet 對 `.goproj` 是關閉的**：SDK 在 import 後移除 `PackageReferences` capability（它因 `RestoreProjectStyle=PackageReference` 而被 Managed.DesignTime.targets 自動加入），「管理 NuGet 套件」等 UI 不會出現在 Go 專案上；restore 本身保留以維持 SDK 解析與設計階段建置。
+Go 專案的相依一律走 go.mod——**NuGet 對 `.goproj` 是完全隱形的**：
+
+- 「管理 NuGet 套件」等 UI 不出現（SDK 在 import 後移除 `PackageReferences` capability，且不再自行設定 `RestoreProjectStyle`）；
+- **不需要 restore**：`SkipResolvePackageAssets=true` 讓建置完全不要求 `obj/project.assets.json`（VS 對 .goproj 也不會執行 NuGet 還原）；
+- **不需要 per-project nuget.config**：NuGet 僅剩的用途是 MSBuild 解析 `Sdk="Orika.NET.Sdk/1.0.0"` 這個 SDK 套件本身——把本機 feed 註冊到使用者層級一次即可（`dotnet nuget add source <repo>\packages --name orika-local --configfile %APPDATA%\NuGet\NuGet.Config`），或把 nupkg 發佈到自有 NuGet 伺服器。已驗證：清空全域快取後,無任何 nuget.config 的專案照常解析 SDK 並建置。
 
 另外，`Configuration` 也會影響編譯旗標：
 

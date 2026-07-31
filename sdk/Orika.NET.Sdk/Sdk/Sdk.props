@@ -30,8 +30,13 @@
     <ManagedLanguageTargetsGotImported Condition="'$(MSBuildProjectExtension)' == '.vbproj'">true</ManagedLanguageTargetsGotImported>
     <ManagedLanguageTargetsGotImported Condition="'$(MSBuildProjectExtension)' == '.fsproj'">true</ManagedLanguageTargetsGotImported>
 
-    <!-- Restore always runs in PackageReference mode, even with no PackageReference item. -->
-    <RestoreProjectStyle Condition="'$(RestoreProjectStyle)' == ''">PackageReference</RestoreProjectStyle>
+    <!-- Deliberately NOT setting RestoreProjectStyle: Go projects take no
+         NuGet packages, and it is exactly this property (== 'PackageReference')
+         that makes Microsoft.Managed.DesignTime.targets add the
+         PackageReferences capability that lights up NuGet's UI. SDK-style
+         projects restore as PackageReference by inference anyway when a
+         restore does run, and ResolvePackageAssets is skipped regardless
+         (SkipResolvePackageAssets below). -->
 
     <!-- TargetFramework only exists to satisfy Microsoft.NET.Sdk; it says nothing about
          a Go binary, so it must not appear in the paths a Go developer looks at.
