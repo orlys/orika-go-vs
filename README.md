@@ -252,7 +252,17 @@ Console.WriteLine(result.Success);
 - **生命週期**:dlv dap 是單一會話伺服器,session 結束自動退出;連線失敗殘留的伺服器會在下一次 F5 前被回收。
 - **主控台**:dlv 以**可見主控台**啟動（debuggee 繼承它,`fmt.Println`／`fmt.Scan` 都在那個視窗）,因此 port 由 launch provider 預先挑選（bind :0 再釋放）,並以 OS listener 表輪詢等待 dlv 就緒——不能用 TCP 試連,dlv dap 只接受單一 client,試連會吃掉 session。session 結束時主控台隨 dlv 關閉。
 
-已知限制:engine 註冊關閉 `Exceptions` 與 `SetNextStatement`——delve 的 DAP 未實作 VS 式例外篩選與「設定下一個陳述式」。
+**P0 快贏批次已實作**(詳細規劃見 `docs/debug-parity-plan.md`):
+
+- **例外設定**:`Exceptions=1` + `Go Exceptions` 分類註冊(項目名對齊 dlv 的 filter label:`Unrecovered Panics`/`Fatal Throws`,以 DAP initialize 實測值為準);**未接住的 panic 會讓偵錯器停在 panic 點**(實測:輸出停在 panic 前一步、VS 進入中斷模式)
+- **條件中斷點**:`ConditionalBP=1`,協定記錄實證 `"condition"` 傳達 dlv 且命中
+- **函式中斷點**:`FunctionBP=1`,`setFunctionBreakpoints` 通道實證可用
+- **命中次數中斷點**:`HitCountBP=1` + `HitCountBreakpointExpressions`(`== {0}`/`>= {0}`/`% {0}` 對映 dlv 的 hitCondition)
+- **反組譯/呼叫堆疊中斷點**:`AddressBP=1`/`CallStackBP=1`(dlv `supportsInstructionBreakpoints`)
+- **goroutine 降噪**:launch 設定 `hideSystemGoroutines:true`
+- **delve 版本**:升級至 1.27.0(解鎖 exceptionBreakpointFilters、hitCondition capability、記憶體讀寫);dlv 以 `--check-go-version=false` 啟動——delve 只「支援」最近兩個 Go 版本,否則舊工具鏈建置的二進位會被硬拒(modal 錯誤)。**建議本機 Go 工具鏈 ≥1.25 以獲得完整支援**(目前 1.21.5 會顯示 WARNING 但功能正常)
+
+已知限制:`SetNextStatement`(拖移黃箭頭)關閉——delve 任何版本都未實作 DAP 的 `goto`,詳見規劃文件專節;`ExceptionConditions`(依模組略過例外)同因 delve 未支援而關閉。
 
 端對端驗證(DTE 自動化,DAP 協定記錄佐證):`main.go` 設中斷點 → F5 → dlv 啟動、`setBreakpoints` 成功、`stopped(reason=breakpoint)` 實際命中;區域變數(含 `chan string 2/3` 這種 Go 原生型別)、呼叫堆疊(`main.main → runtime.main`)、goroutine 清單(`[Go 1..n]`)全部可見;改 `StartArguments` 重跑,於中斷點求值 `os.Args` 確認新參數 `["gamma","delta","epsilon"]` 生效;繼續執行至正常結束。另一個踩坑記錄(命令不出現的三連環,全中才會好):(1) VSCT 編譯後必須靠 `VSPackage.resx` 的 `MergeWithCTO=true` 才會嵌進組件資源(`Menus.ctmenu`);(2) 套件註冊必須 `RegisterWithCodebase=true`——預設只寫組件顯示名稱(`PublicKeyToken=null`),非 GAC 的擴充組件無從解析,shell 載不了套件、CTMENU 合併靜默讀到空;(3) shell 依 `Menus` 版本號快取合併結果,修好資源後必須把 `ProvideMenuResource` 版本 +1(或跑 `devenv /updateconfiguration`,`install-vsix.ps1` 現在每次安裝後都會跑)。驗證:`DTE.Commands.Item` 確認命令進入命令表,名稱 `ProjectandSolutionContextMenus.Project.加入Go模組參考`。
 

@@ -35,17 +35,55 @@
 [$RootKey$\AD7Metrics\Engine\{2A5D6E81-4C9B-45E2-B8F3-9D0C7A1E6F24}]
 "CLSID"="{DAB324E9-7B35-454C-ACA8-F6BB0D5C8673}"
 "AlwaysLoadLocal"=dword:00000001
-"AddressBP"=dword:00000000
-"CallStackBP"=dword:00000000
+// Breakpoint kinds: verified against dlv 1.27.0's initialize response
+// (supportsConditionalBreakpoints / supportsHitConditionalBreakpoints /
+// supportsFunctionBreakpoints / supportsInstructionBreakpoints all true).
+// AddressBP is NOT runtime-overridden by the host, so it must be static.
+"AddressBP"=dword:00000001
+"CallStackBP"=dword:00000001
+"ConditionalBP"=dword:00000001
+"FunctionBP"=dword:00000001
+"HitCountBP"=dword:00000001
 "Attach"=dword:00000000
-"Exceptions"=dword:00000000
+// Exception Settings integration: dlv >= 1.26 reports
+// exceptionBreakpointFilters (unrecovered-panic / runtime-fatal-throw), and
+// supportsExceptionInfoRequest feeds the Exception Helper on a panic.
+"Exceptions"=dword:00000001
+"ExceptionConditions"=dword:00000000
+"ExceptionBreakpointCategory"="{7C8B6A2D-3E94-4F1B-A5D0-6E2C9B7F4A18}"
+// delve DAP has no goto/gotoTargets (any version) - the host would override
+// this to 0 from the initialize response even if set.
 "SetNextStatement"=dword:00000000
 "Name"="Go Debugger (Delve)"
 "Language"="Go"
+"LocalsScopeName"="Locals"
 "SuppressModulesRequestOnAttach"=dword:00000001
+
+// VS hit-count modes -> delve hitCondition expressions.
+[$RootKey$\AD7Metrics\Engine\{2A5D6E81-4C9B-45E2-B8F3-9D0C7A1E6F24}\HitCountBreakpointExpressions]
+"Equal"="== {0}"
+"EqualOrGreater"=">= {0}"
+"Mod"="% {0}"
 
 // Claims .go files' breakpoints for this engine (same shape as the vsdbg and
 // CMake registrations; a null LanguageId is accepted - CMake ships one).
 [$RootKey$\AD7Metrics\Engine\{2A5D6E81-4C9B-45E2-B8F3-9D0C7A1E6F24}\LanguageMappings\Go]
 "LanguageId"="{00000000-0000-0000-0000-000000000000}"
 "Extensions"="*"
+
+// Exception Settings category. Entry names must equal dlv's filter LABELS
+// ("Unrecovered Panics" / "Fatal Throws" - probed from dlv 1.27.0's
+// initialize response), which is how the host binds them without an
+// ExceptionBreakpointMappings table. Category State carries
+// EXCEPTION_IS_VSCODE_FILTER (0x10000); 0x4001 = break when thrown,
+// matching dlv's default=true for both filters.
+[$RootKey$\AD7Metrics\Exception\{7C8B6A2D-3E94-4F1B-A5D0-6E2C9B7F4A18}]
+
+[$RootKey$\AD7Metrics\Exception\{7C8B6A2D-3E94-4F1B-A5D0-6E2C9B7F4A18}\Go Exceptions]
+"State"=dword:00014000
+
+[$RootKey$\AD7Metrics\Exception\{7C8B6A2D-3E94-4F1B-A5D0-6E2C9B7F4A18}\Go Exceptions\Unrecovered Panics]
+"State"=dword:00004001
+
+[$RootKey$\AD7Metrics\Exception\{7C8B6A2D-3E94-4F1B-A5D0-6E2C9B7F4A18}\Go Exceptions\Fatal Throws]
+"State"=dword:00004001

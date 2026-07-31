@@ -150,7 +150,11 @@ namespace OrikaGo.LanguageService
             var startInfo = new ProcessStartInfo
             {
                 FileName = dlvPath,
-                Arguments = "dap --listen=127.0.0.1:" + port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                // --check-go-version=false: delve only "supports" the last two Go
+                // releases and refuses binaries built by an older toolchain
+                // outright (a modal error kills the F5). The DWARF it reads is
+                // stable across that gap in practice; a no-op when versions match.
+                Arguments = "dap --check-go-version=false --listen=127.0.0.1:" + port.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 WorkingDirectory = workingDirectory,
                 UseShellExecute = false,
                 CreateNoWindow = false,
@@ -222,6 +226,9 @@ namespace OrikaGo.LanguageService
             json.Append("\"request\":\"launch\",");
             json.Append("\"mode\":\"exec\",");
             json.Append("\"stopOnEntry\":false,");
+            // Keep the Threads window to USER goroutines; runtime internals
+            // otherwise drown it (dlv >= 1.7.3).
+            json.Append("\"hideSystemGoroutines\":true,");
             json.Append("\"program\":").Append(JsonString(executable)).Append(',');
             json.Append("\"cwd\":").Append(JsonString(workingDirectory));
             if (!string.IsNullOrWhiteSpace(arguments))
