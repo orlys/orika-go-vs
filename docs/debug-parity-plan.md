@@ -1,5 +1,12 @@
 # Go 偵錯功能規劃表(VS 18 + DAH + dlv dap)
 
+> **實作進度附註(2026-08-01)**
+>
+> - **P0 快贏批次:已完成並驗證**——例外設定(panic 中斷)、條件/函式/命中次數/位址/呼叫堆疊中斷點、`hideSystemGoroutines`、Locals scope 名稱、delve 升級 1.27.0、Go 工具鏈升至 1.25.12。
+> - **Attach to Process:未完成(卡住,需要新資訊)**。已完成的部分:`GoAdapterLauncher`(`IAdapterLauncher`,`UpdateLaunchOptions` 產生 `{"$debugServer":port,"request":"attach","mode":"local","processId":N}`)、`DelveServer` 抽出供 F5/attach 共用、COM CLSID 註冊。**卡點**:透過 Go engine attach 一律以 `HRESULT 0x8971001E` 失敗,且失敗發生在 **adapter launcher 被呼叫之前**——dlv 從未啟動、ActivityLog 無記錄、DAH 協定無流量。對照組:同一個行程用 **Native engine attach 成功**,證明目標與 attach 管線本身沒問題。已嘗試且皆無效的註冊變體:(1) `AdapterLauncher` metric 值、(2) `ExtensibilityObjects` 編號子鍵、(3) `PortSupplier` 由單值改為編號子鍵列表。
+>   **下一步方向**:0x8971001E 未見於 msdbg.h,需要更底層的診斷——建議用 VS 的 debugger ETW/DebugDiag 追 `IDebugEngine2::Attach` 呼叫鏈,或改以最小 DAH sample engine 反推缺少的 metric(可能與 `Programs`/`ProgramProvider`/`CodeType` 宣告有關,DAH 的 attach 是否需要額外的 program provider 尚未查清)。
+>   目前 `Attach=0`,避免在「附加至處理序」給出一個必定失敗的程式碼類型。
+
 ## 一、中斷點類
 
 | 功能 | 目前 Go 狀態 | 缺口層 | 具體行動 | 優先級 |

@@ -56,6 +56,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="AddModuleReferenceDialog.cs" />
+    <Compile Include="DelveServer.cs" />
+    <Compile Include="GoAdapterLauncher.cs" />
     <Compile Include="GoContentTypeDefinitions.cs" />
     <Compile Include="GoDebugLaunchProvider.cs" />
     <Compile Include="GoDependenciesContextMenuProvider.cs" />
@@ -110,6 +112,12 @@
          ILaunchProfile) has no usable NuGet package (nuget.org stops at 2.x from 2017), so it
          is referenced straight from the VS installation. Private=false: VS provides it at
          runtime, it must not enter the VSIX payload. -->
+    <!-- Debug Adapter Host extensibility (IAdapterLauncher) - VS-installed
+         assembly, not on NuGet; VS provides it at runtime. -->
+    <Reference Include="Microsoft.VisualStudio.Debugger.DebugAdapterHost.Interfaces">
+      <HintPath>$(VsInstallRoot)\Common7\IDE\Extensions\Microsoft\DebugAdapterHost\Microsoft.VisualStudio.Debugger.DebugAdapterHost.Interfaces.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Microsoft.VisualStudio.ProjectSystem.Managed.VS">
       <HintPath>$(VsInstallRoot)\Common7\IDE\Extensions\Microsoft\ManagedProjectSystem\Microsoft.VisualStudio.ProjectSystem.Managed.VS.dll</HintPath>
       <Private>false</Private>

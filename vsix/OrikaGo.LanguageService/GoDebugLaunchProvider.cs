@@ -96,7 +96,7 @@ namespace OrikaGo.LanguageService
                 // Adapter Host over stdio. So it is started HERE, and the port it
                 // reports is handed to the host via "$debugServer": the host then
                 // connects instead of launching an adapter process itself.
-                int port = await StartDlvDapServerAsync(dlv, workingDirectory);
+                int port = await DelveServer.StartAsync(dlv, workingDirectory, visibleConsole: true);
 
                 settings.LaunchDebugEngineGuid = DelveEngineGuid;
                 // The remaining (non-$) properties are what the host forwards as
@@ -109,110 +109,8 @@ namespace OrikaGo.LanguageService
             return new IDebugLaunchSettings[] { settings };
         }
 
-        /// <summary>
-        /// The dlv dap server of the most recent debug session. dlv exits by
-        /// itself when its single session ends; this reference exists to reap a
-        /// server whose session never started (connection failure, user cancel),
-        /// which would otherwise linger until the next F5.
-        /// </summary>
-        private static Process _dlvServer;
-
-        private static async Task<int> StartDlvDapServerAsync(string dlvPath, string workingDirectory)
-        {
-            Process previous = System.Threading.Interlocked.Exchange(ref _dlvServer, null);
-            if (previous != null)
-            {
-                try
-                {
-                    if (!previous.HasExited)
-                    {
-                        previous.Kill();
-                    }
-                }
-                catch (Exception) { }
-                previous.Dispose();
-            }
-
-            // The port is picked HERE (bind :0, read it back, release) instead of
-            // letting dlv pick one, because dlv must run WITHOUT redirected stdio:
-            // the debuggee inherits dlv's console, and that console window is
-            // where the Go program's stdout/stdin live during F5 - redirect
-            // dlv's pipes and the program runs headless with its output shunted
-            // into the Output window only.
-            // ponytail: tiny bind-then-reuse race window; dlv fails fast and the
-            // poll below reports it if the port gets stolen in between.
-            int port;
-            var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-            probe.Start();
-            port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = dlvPath,
-                // --check-go-version=false: delve only "supports" the last two Go
-                // releases and refuses binaries built by an older toolchain
-                // outright (a modal error kills the F5). The DWARF it reads is
-                // stable across that gap in practice; a no-op when versions match.
-                Arguments = "dap --check-go-version=false --listen=127.0.0.1:" + port.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = false,
-                CreateNoWindow = false,
-            };
-
-            var process = Process.Start(startInfo);
-            try
-            {
-                // Wait until dlv actually listens before handing the port to the
-                // Debug Adapter Host (it connects immediately, no retry). The
-                // check must NOT open a connection - dlv dap serves a single
-                // client, and a probe connect would consume the session - so the
-                // OS listener table is consulted instead.
-                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-                while (true)
-                {
-                    if (process.HasExited)
-                    {
-                        throw new InvalidOperationException(GoStrings.DlvExitedEarly(process.ExitCode));
-                    }
-                    bool listening = false;
-                    foreach (System.Net.IPEndPoint listener in
-                             System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners())
-                    {
-                        if (listener.Port == port)
-                        {
-                            listening = true;
-                            break;
-                        }
-                    }
-                    if (listening)
-                    {
-                        break;
-                    }
-                    if (DateTime.UtcNow > deadline)
-                    {
-                        throw new InvalidOperationException(GoStrings.DlvNotListening(port));
-                    }
-                    await Task.Delay(100);
-                }
-
-                _dlvServer = process;
-                return port;
-            }
-            catch
-            {
-                try
-                {
-                    if (!process.HasExited)
-                    {
-                        process.Kill();
-                    }
-                }
-                catch (Exception) { }
-                process.Dispose();
-                throw;
-            }
-        }
+        // dlv dap server startup/reaping lives in DelveServer (shared with the
+        // attach path in GoAdapterLauncher).
 
         private static string BuildLaunchOptions(int debugServerPort, string executable, string arguments, string workingDirectory)
         {
