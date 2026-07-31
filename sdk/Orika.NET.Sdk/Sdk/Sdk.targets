@@ -46,6 +46,13 @@
        only the UI affordances go away. -->
   <ItemGroup>
     <ProjectCapability Remove="PackageReferences" />
+    <!-- A Go module can reference neither .NET assemblies nor COM/WinRT
+         components; removing these hides their Dependencies sub-nodes and
+         "Add Reference" affordances. ProjectReferences stays - .goproj to
+         .goproj references are supported (GetTargetPath glue above). -->
+    <ProjectCapability Remove="AssemblyReferences" />
+    <ProjectCapability Remove="COMReferences" />
+    <ProjectCapability Remove="WinRTReferences" />
     <!-- LaunchProfiles stays: the managed project system's F5 plumbing (its
          IVsDebuggableProjectCfg) lives in that subsystem - removing the
          capability makes Debug.Start unavailable outright (verified). The

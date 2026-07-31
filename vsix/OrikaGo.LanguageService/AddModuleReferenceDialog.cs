@@ -21,7 +21,7 @@ namespace OrikaGo.LanguageService
 
         public AddModuleReferenceDialog()
         {
-            Title = "加入 Go 模組參考";
+            Title = GoStrings.AddReferenceDialogTitle;
             Width = 460;
             SizeToContent = SizeToContent.Height;
             ResizeMode = ResizeMode.NoResize;
@@ -30,8 +30,8 @@ namespace OrikaGo.LanguageService
             _modulePathBox = new TextBox { Margin = new Thickness(0, 2, 0, 8) };
             _versionBox = new TextBox { Margin = new Thickness(0, 2, 0, 8) };
 
-            var okButton = new Button { Content = "確定", Width = 80, Margin = new Thickness(0, 8, 8, 0), IsDefault = true };
-            var cancelButton = new Button { Content = "取消", Width = 80, Margin = new Thickness(0, 8, 0, 0), IsCancel = true };
+            var okButton = new Button { Content = GoStrings.OkButton, Width = 80, Margin = new Thickness(0, 8, 8, 0), IsDefault = true };
+            var cancelButton = new Button { Content = GoStrings.CancelButton, Width = 80, Margin = new Thickness(0, 8, 0, 0), IsCancel = true };
             okButton.Click += OnOk;
 
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
@@ -39,9 +39,9 @@ namespace OrikaGo.LanguageService
             buttons.Children.Add(cancelButton);
 
             var layout = new StackPanel { Margin = new Thickness(12) };
-            layout.Children.Add(new TextBlock { Text = "模組路徑（例如 github.com/google/uuid）：" });
+            layout.Children.Add(new TextBlock { Text = GoStrings.ModulePathLabel });
             layout.Children.Add(_modulePathBox);
-            layout.Children.Add(new TextBlock { Text = "版本（例如 v1.6.0；留空表示最新版）：" });
+            layout.Children.Add(new TextBlock { Text = GoStrings.VersionLabel });
             layout.Children.Add(_versionBox);
             layout.Children.Add(buttons);
             Content = layout;
@@ -59,13 +59,13 @@ namespace OrikaGo.LanguageService
             // of letting a typo produce a confusing build failure.
             if (module.Length == 0 || module.Any(char.IsWhiteSpace) || module.IndexOfAny(new[] { '"', '\'', '`' }) >= 0)
             {
-                MessageBox.Show(this, "請輸入合法的模組路徑（不可含空白或引號）。", "Orika Go",
+                MessageBox.Show(this, GoStrings.InvalidModulePath, GoStrings.MessageBoxTitle,
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
             if (version.Any(char.IsWhiteSpace) || version.IndexOfAny(new[] { '"', '\'', '`' }) >= 0)
             {
-                MessageBox.Show(this, "版本不可含空白或引號。", "Orika Go",
+                MessageBox.Show(this, GoStrings.InvalidVersion, GoStrings.MessageBoxTitle,
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }

@@ -2,7 +2,8 @@
 <!--
   Command table for the OrikaGo package.
 
-  One command: "加入 Go 模組參考..." on the project-node context menu.
+  One command: "Add Go Module Reference..." on the Dependencies-node context
+  menu (localized via per-language Strings sets below).
   DefaultInvisible + DynamicVisibility + the VisibilityConstraints entry keep
   it hidden until the uiContextGoProject UI context is active; that context is
   turned on by the ProvideUIContextRule on OrikaGoPackage when the ACTIVE
@@ -16,18 +17,32 @@
 
   <Commands package="guidOrikaGoPackage">
     <Groups>
-      <Group guid="guidOrikaGoCmdSet" id="grpProjectContext" priority="0x0200">
-        <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_PROJNODE" />
+      <!-- The Dependencies tree root maps to the shell's REFERENCEROOT context
+           menu (DependenciesContextMenuProvider in the managed project system
+           routes DependenciesRootNode there); 0x0150 slots the group between
+           the built-in Add group (0x0100) and Scope-to-This (0x0200). The
+           same menu serves legacy References nodes, but the uiContextGoProject
+           visibility constraint keeps this command Go-only. -->
+      <Group guid="guidOrikaGoCmdSet" id="grpDependenciesContext" priority="0x0150">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_REFERENCEROOT" />
       </Group>
     </Groups>
 
     <Buttons>
       <Button guid="guidOrikaGoCmdSet" id="cmdidAddGoModuleReference" priority="0x0100" type="Button">
-        <Parent guid="guidOrikaGoCmdSet" id="grpProjectContext" />
+        <Parent guid="guidOrikaGoCmdSet" id="grpDependenciesContext" />
         <CommandFlag>DefaultInvisible</CommandFlag>
         <CommandFlag>DynamicVisibility</CommandFlag>
+        <!-- Default (en-us) strings are the fallback; language-specific sets
+             below are picked by the IDE's UI language at ctmenu merge. -->
         <Strings>
+          <ButtonText>Add Go &amp;Module Reference...</ButtonText>
+        </Strings>
+        <Strings language="zh-TW">
           <ButtonText>加入 Go 模組參考(&amp;M)...</ButtonText>
+        </Strings>
+        <Strings language="zh-CN">
+          <ButtonText>添加 Go 模块引用(&amp;M)...</ButtonText>
         </Strings>
       </Button>
     </Buttons>
@@ -40,7 +55,7 @@
   <Symbols>
     <GuidSymbol name="guidOrikaGoPackage" value="{9C4E9A2B-7D31-4F5C-A1E8-52B60D3F8E74}" />
     <GuidSymbol name="guidOrikaGoCmdSet" value="{1F6D3B85-42A9-4E0C-9B7D-E85C2A94F316}">
-      <IDSymbol name="grpProjectContext" value="0x1010" />
+      <IDSymbol name="grpDependenciesContext" value="0x1010" />
       <IDSymbol name="cmdidAddGoModuleReference" value="0x0100" />
     </GuidSymbol>
     <!-- Must match OrikaGoPackage.UiContextGuidString. -->

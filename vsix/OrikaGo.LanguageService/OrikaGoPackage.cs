@@ -34,7 +34,7 @@ namespace OrikaGo.LanguageService
     // the shell caches the merge PER VERSION - it never re-reads a version it
     // has already processed, so the fixed resource stayed invisible until the
     // version changed. Bump this whenever the vsct changes.
-    [ProvideMenuResource("Menus.ctmenu", 2)]
+    [ProvideMenuResource("Menus.ctmenu", 3)]
     // Lights up the vsct's uiContextGoProject when the ACTIVE project carries
     // the OrikaGo capability (declared by Orika.NET.Sdk), so the command only
     // appears on .goproj project nodes - evaluated by the shell without
@@ -88,15 +88,15 @@ namespace OrikaGo.LanguageService
                 AddOrUpdateReference(projectPath, dialog.ModulePath, dialog.ModuleVersion);
 
                 dte.StatusBar.Text = dialog.ModuleVersion.Length > 0
-                    ? $"已加入 Go 模組參考 {dialog.ModulePath}@{dialog.ModuleVersion}，將於下次建置時以 go get 解析。"
-                    : $"已加入 Go 模組參考 {dialog.ModulePath}（最新版），將於下次建置時以 go get 解析。";
+                    ? GoStrings.ReferenceAddedPinned(dialog.ModulePath, dialog.ModuleVersion)
+                    : GoStrings.ReferenceAddedLatest(dialog.ModulePath);
             }
             catch (Exception ex)
             {
                 VsShellUtilities.ShowMessageBox(
                     this,
-                    "無法加入 Go 模組參考：" + ex.Message,
-                    "Orika Go",
+                    GoStrings.AddReferenceFailed(ex.Message),
+                    GoStrings.MessageBoxTitle,
                     OLEMSGICON.OLEMSGICON_CRITICAL,
                     OLEMSGBUTTON.OLEMSGBUTTON_OK,
                     OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);

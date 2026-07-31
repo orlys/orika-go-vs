@@ -43,8 +43,8 @@ namespace OrikaGo.LanguageService
             return null;
         }
 
-        /// <summary>The probe list shown in "not found" error messages.</summary>
-        public const string ProbeDescription = "PATH、GOBIN、GOPATH\\bin（含 go env -w 持久化的值）或 %USERPROFILE%\\go\\bin";
+        /// <summary>The probe list shown in "not found" error messages (language-neutral).</summary>
+        public const string ProbeDescription = "PATH / GOBIN / GOPATH\\bin (go env -w) / %USERPROFILE%\\go\\bin";
 
         private static IEnumerable<string> CandidateDirectories()
         {

@@ -43,7 +43,9 @@ SDK 內部會匯入 `Microsoft.NET.Sdk`（讓 Visual Studio 能載入專案、`d
 
 冪等規則與 `LangVersion` 相同：`go.mod` 已含該模組（且版本吻合）時完全不執行 `go get`，`go.mod` 的 mtime 不變，不會破壞增量建置。改變 `Version` 會重新解析；**移除**參考不會從 `go.mod` 移除 require——那是 `go mod tidy` 的職責。
 
-也可以不用手寫：在 Solution Explorer 的 **Go 專案節點上按右鍵 →「加入 Go 模組參考…」**，輸入模組路徑與版本（留空＝最新版）即可。命令由 VSIX 的 `OrikaGoPackage` 提供，只在具 `OrikaGo` capability 的專案（`.goproj`）上出現；同一模組已有參考時會就地更新 `Version`。寫入後 CPS 因 `HandlesOwnReload` 自動重載專案，下次建置由 `GoRestoreModules` 以 `go get` 解析。
+也可以不用手寫：在 Solution Explorer 的 **「相依性（Dependencies）」節點上按右鍵 →「加入 Go 模組參考… / Add Go Module Reference…」**，輸入模組路徑與版本（留空＝最新版）即可。命令由 VSIX 的 `OrikaGoPackage` 提供，多語系（預設英文，另有 zh-TW／zh-CN 字串集，跟隨 VS 顯示語言），只在具 `OrikaGo` capability 的專案（`.goproj`）上出現；同一模組已有參考時會就地更新 `Version`。寫入後 CPS 因 `HandlesOwnReload` 自動重載專案，下次建置由 `GoRestoreModules` 以 `go get` 解析。技術備註：Dependencies 節點的右鍵選單其實是 shell 的 `IDM_VS_CTXT_REFERENCEROOT`（managed 專案系統的 `DependenciesContextMenuProvider` 將樹節點映射過去），vsct 直接 parent 上去即可；VSCT 多語系用同一 Button 下多個 `<Strings language="…">` 區塊。
+
+Dependencies 節點下與 .NET 相關的子節點（組件／COM／WinRT 參考）已一併隱藏——SDK 移除 `AssemblyReferences`／`COMReferences`／`WinRTReferences` capability；`ProjectReferences` 保留（`.goproj` 之間的專案參考是支援的）。
 
 Go 專案的相依一律走 go.mod——**NuGet 對 `.goproj` 是完全隱形的**：
 
@@ -248,6 +250,7 @@ Console.WriteLine(result.Success);
 - **除錯資訊**:Debug 組態本來就以 `-gcflags "all=-N -l"` 編譯（見「支援的屬性」),符號與區域變數完整,SDK 端無須任何改動。
 - **dlv 探測**:與 gopls 同一套 `GoToolLocator`（PATH → GOBIN/GOPATH\bin 含 `go env -w` 持久值 → `%USERPROFILE%\go\bin`);找不到時錯誤訊息給出 `go install github.com/go-delve/delve/cmd/dlv@latest`。
 - **生命週期**:dlv dap 是單一會話伺服器,session 結束自動退出;連線失敗殘留的伺服器會在下一次 F5 前被回收。
+- **主控台**:dlv 以**可見主控台**啟動（debuggee 繼承它,`fmt.Println`／`fmt.Scan` 都在那個視窗）,因此 port 由 launch provider 預先挑選（bind :0 再釋放）,並以 OS listener 表輪詢等待 dlv 就緒——不能用 TCP 試連,dlv dap 只接受單一 client,試連會吃掉 session。session 結束時主控台隨 dlv 關閉。
 
 已知限制:engine 註冊關閉 `Exceptions` 與 `SetNextStatement`——delve 的 DAP 未實作 VS 式例外篩選與「設定下一個陳述式」。
 

@@ -68,7 +68,7 @@ namespace OrikaGo.LanguageService
             if (string.IsNullOrEmpty(executable) || !File.Exists(executable))
             {
                 throw new FileNotFoundException(
-                    "找不到 Go 執行檔：" + (executable ?? "(GoOutputPath 未設定)") + "。請先建置專案。");
+                    GoStrings.GoExecutableMissing(executable ?? "(GoOutputPath?)"));
             }
 
             var settings = new DebugLaunchSettings(launchOptions)
@@ -89,9 +89,7 @@ namespace OrikaGo.LanguageService
                 string dlv = GoToolLocator.Find("dlv.exe");
                 if (dlv == null)
                 {
-                    throw new FileNotFoundException(
-                        "找不到 dlv.exe（delve 偵錯器）。已探測 " + GoToolLocator.ProbeDescription + "。" +
-                        "請安裝：go install github.com/go-delve/delve/cmd/dlv@latest");
+                    throw new FileNotFoundException(GoStrings.DlvMissing);
                 }
 
                 // dlv dap speaks TCP only - it cannot be spawned by the Debug
@@ -135,40 +133,67 @@ namespace OrikaGo.LanguageService
                 previous.Dispose();
             }
 
+            // The port is picked HERE (bind :0, read it back, release) instead of
+            // letting dlv pick one, because dlv must run WITHOUT redirected stdio:
+            // the debuggee inherits dlv's console, and that console window is
+            // where the Go program's stdout/stdin live during F5 - redirect
+            // dlv's pipes and the program runs headless with its output shunted
+            // into the Output window only.
+            // ponytail: tiny bind-then-reuse race window; dlv fails fast and the
+            // poll below reports it if the port gets stolen in between.
+            int port;
+            var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            probe.Start();
+            port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+            probe.Stop();
+
             var startInfo = new ProcessStartInfo
             {
                 FileName = dlvPath,
-                Arguments = "dap --listen=127.0.0.1:0",
+                Arguments = "dap --listen=127.0.0.1:" + port.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 WorkingDirectory = workingDirectory,
                 UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
+                CreateNoWindow = false,
             };
 
             var process = Process.Start(startInfo);
             try
             {
-                // First stdout line: "DAP server listening at: 127.0.0.1:<port>"
-                var readLine = process.StandardOutput.ReadLineAsync();
-                var completed = await Task.WhenAny(readLine, Task.Delay(TimeSpan.FromSeconds(10)));
-                string line = completed == readLine ? readLine.Result : null;
-
-                Match match = line != null
-                    ? Regex.Match(line, @"listening at:.*:(\d+)", RegexOptions.CultureInvariant)
-                    : Match.Empty;
-                if (!match.Success)
+                // Wait until dlv actually listens before handing the port to the
+                // Debug Adapter Host (it connects immediately, no retry). The
+                // check must NOT open a connection - dlv dap serves a single
+                // client, and a probe connect would consume the session - so the
+                // OS listener table is consulted instead.
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+                while (true)
                 {
-                    throw new InvalidOperationException(
-                        "dlv dap 未如預期啟動" + (line != null ? "，輸出：" + line : "（逾時）") + "。");
+                    if (process.HasExited)
+                    {
+                        throw new InvalidOperationException(GoStrings.DlvExitedEarly(process.ExitCode));
+                    }
+                    bool listening = false;
+                    foreach (System.Net.IPEndPoint listener in
+                             System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners())
+                    {
+                        if (listener.Port == port)
+                        {
+                            listening = true;
+                            break;
+                        }
+                    }
+                    if (listening)
+                    {
+                        break;
+                    }
+                    if (DateTime.UtcNow > deadline)
+                    {
+                        throw new InvalidOperationException(GoStrings.DlvNotListening(port));
+                    }
+                    await Task.Delay(100);
                 }
 
-                // Keep both pipes drained so dlv can never block on a full buffer.
-                _ = process.StandardOutput.ReadToEndAsync();
-                _ = process.StandardError.ReadToEndAsync();
-
                 _dlvServer = process;
-                return int.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+                return port;
             }
             catch
             {
