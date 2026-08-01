@@ -44,28 +44,26 @@
 "ConditionalBP"=dword:00000001
 "FunctionBP"=dword:00000001
 "HitCountBP"=dword:00000001
-// Attach-to-process: OFF pending a working registration. The plumbing below
-// (GoAdapterLauncher + ExtensibilityObjects + PortSupplier) is complete and
-// compiles, but every attempt to attach through this engine fails in the
-// shell with HRESULT 0x8971001E BEFORE the adapter launcher is consulted
-// (dlv is never started, no ActivityLog entry, no DAH protocol traffic);
-// attaching the same process with the Native engine succeeds, so the target
-// and the attach path itself are fine. Three registration shapes were tried:
-// "AdapterLauncher" metric, ExtensibilityObjects subkey, and PortSupplier as
-// a numbered subkey list. Leaving Attach=1 would put a code type in
-// 偵錯 → 附加至處理序 that always errors, so it stays 0 until the missing
-// piece is found. See docs/debug-parity-plan.md (P1).
-"Attach"=dword:00000000
-// The launcher is registered in the ExtensibilityObjects section below; the
-// "AdapterLauncher" value is the deprecated spelling and makes the host log
-// a migration warning on every session.
+// Attach-to-process. The missing piece behind the earlier 0x8971001E
+// failures was ProgramProvider: without one, the shell finds no program
+// belonging to this engine inside the target process and gives up long
+// before the adapter launcher runs. PortSupplier is a single VALUE (the
+// shell's default local supplier), not a numbered subkey list - the subkey
+// shape belongs to the remote/vsdbg registrations. Shapes verified against
+// the JavaScript/TypeScript adapter, the one in-box Debug Adapter Host
+// engine that does local attach.
+"Attach"=dword:00000001
+"AutoSelectPriority"=dword:00000004
+"PortSupplier"="{708C1ECA-FF48-11D2-904F-00C04FA302A1}"
+"ProgramProvider"="{3E8C1A47-9D26-4B85-BF03-71A5E9C4D682}"
+"AlwaysLoadProgramProviderLocal"=dword:00000001
 //
 // MemoryReferencesAreAddresses=0: delve's readMemory accepts ONLY the
 // references it handed out itself (referencesCollection), never a raw
 // address - so letting the host treat any address as a memory reference
 // makes it probe readMemory with the frame's instruction pointer on every
-// stop, which delve rejects ("unknown memoryReference") and the user sees
-// as an error dialog on every breakpoint hit.
+// stop, which delve rejects ("unknown memoryReference"). Kept at 0 even
+// though DelveProxy now neutralizes that probe.
 "MemoryReferencesAreAddresses"=dword:00000000
 // Exception Settings integration: dlv >= 1.26 reports
 // exceptionBreakpointFilters (unrecovered-panic / runtime-fatal-throw), and
@@ -89,12 +87,16 @@
 [$RootKey$\AD7Metrics\Engine\{2A5D6E81-4C9B-45E2-B8F3-9D0C7A1E6F24}\ExtensibilityObjects]
 "0"="{B7A3F2D9-5C81-4E6A-9F42-8D0E3C7B6A25}"
 
-// Port suppliers the engine can attach through, as a NUMBERED SUBKEY list
-// (the vsdbg registrations use this shape; a single "PortSupplier" value is
-// not read). {708C1ECA-...} is the shell's default local port supplier -
-// the one behind 偵錯 → 附加至處理序.
-[$RootKey$\AD7Metrics\Engine\{2A5D6E81-4C9B-45E2-B8F3-9D0C7A1E6F24}\PortSupplier]
-"0"="{708C1ECA-FF48-11D2-904F-00C04FA302A1}"
+// COM registration for GoProgramProvider (IDebugProgramProvider2), the
+// component that tells the attach pipeline a given process hosts a Go
+// program this engine can debug. GUID must match
+// GoProgramProvider.ClsidString.
+[$RootKey$\CLSID\{3E8C1A47-9D26-4B85-BF03-71A5E9C4D682}]
+"Assembly"="OrikaGo.LanguageService"
+"Class"="OrikaGo.LanguageService.GoProgramProvider"
+"InprocServer32"="$WinDir$\SYSTEM32\MSCOREE.DLL"
+"CodeBase"="$PackageFolder$\OrikaGo.LanguageService.dll"
+"ThreadingModel"="Free"
 
 // VS hit-count modes -> delve hitCondition expressions.
 [$RootKey$\AD7Metrics\Engine\{2A5D6E81-4C9B-45E2-B8F3-9D0C7A1E6F24}\HitCountBreakpointExpressions]

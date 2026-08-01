@@ -64,6 +64,7 @@
     <Compile Include="GoDependenciesContextMenuProvider.cs" />
     <Compile Include="GoImageMonikers.cs" />
     <Compile Include="GoLanguageClient.cs" />
+    <Compile Include="GoProgramProvider.cs" />
     <Compile Include="GoProjectTreeIconProvider.cs" />
     <Compile Include="GoStrings.cs" />
     <Compile Include="GoToolLocator.cs" />
