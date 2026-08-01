@@ -49,6 +49,17 @@ SDK 內部會匯入 `Microsoft.NET.Sdk`（讓 Visual Studio 能載入專案、`d
 
 Dependencies 節點下與 .NET 相關的子節點（組件／COM／WinRT 參考）已一併隱藏——SDK 移除 `AssemblyReferences`／`COMReferences`／`WinRTReferences` capability；`ProjectReferences` 保留（`.goproj` 之間的專案參考是支援的）。
 
+**Go 工具命令**（VSIX 提供，只在 `.goproj` 上出現，多語系）：
+
+| 選單項目 | 位置 | 實際執行 | 說明 |
+|------|------|------|------|
+| 加入 Go 模組參考… | 相依性節點右鍵 | 寫入 `GoModuleReference` | 下次建置以 `go get` 解析 |
+| 整理 Go 模組相依 | 相依性節點右鍵 | `go mod tidy` | 移除 go.mod 中未使用的模組、補上缺少的。這是 Code Cleanup 的相依層對應物——原始碼層的整理（gofmt／整理 import）由 gopls 負責 |
+| 執行 Go 產生器 | 專案節點右鍵 | `go generate ./...` | 執行 `//go:generate` 指示。Go 的建置**不會**自動執行它，因此這是 IDE 內唯一的入口 |
+| 執行 Go 靜態檢查 | 專案節點右鍵 | `go vet ./...` | 不必重新建置即可單獨執行（建置期的等效做法是 `-p:RunGoVet=true`） |
+
+輸出會寫進「Orika Go」輸出窗格，失敗另以對話框提示。
+
 Go 專案的相依一律走 go.mod——**NuGet 對 `.goproj` 是完全隱形的**：
 
 - 「管理 NuGet 套件」不出現在專案右鍵選單：SDK 移除 `PackageReferences`／`AssemblyReferences` capability（讓 NuGet 判定專案不支援），VSIX 再以 CPS 的 `IAsyncCommandGroupHandler`（`GoHiddenNuGetCommandsHandler`，`AppliesTo("OrikaGo")`）把該命令標為不可見。**兩者缺一不可**——NuGet 的可見性只看「方案是否開啟」，與專案型別無關，單靠 capability 只會讓命令留在選單上、點下去回報「專案不支援」；
