@@ -62,6 +62,7 @@
     <Compile Include="GoContentTypeDefinitions.cs" />
     <Compile Include="GoDebugLaunchProvider.cs" />
     <Compile Include="GoDependenciesContextMenuProvider.cs" />
+    <Compile Include="GoHiddenCommandsHandler.cs" />
     <Compile Include="GoImageMonikers.cs" />
     <Compile Include="GoLanguageClient.cs" />
     <Compile Include="GoProgramProvider.cs" />

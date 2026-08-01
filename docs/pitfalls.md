@@ -186,9 +186,30 @@ val2.Enabled = IsSolutionExistsAndNotDebuggingAndNotBuilding()
 
 `Visible` 與專案型別完全無關,所以 capability 做對的結果是「命令仍在,點下去回報 *The project ... is unsupported*」。
 
-要真正移除,只能讓專案節點**不使用 shell 的共用選單**:NuGet 是把命令 placement 到 `IDM_VS_CTXT_PROJNODE`(其 group `IDG_VS_CTXT_PACKAGEMANAGEMENT` = 0x02F0 **不在** `SharedCmdPlace.vsct` 對 PROJNODE 的標準 placement 清單中)。因此做法是:自訂一個 context menu,用 `<CommandPlacements>` 把標準的 11 個 group(`IDG_VS_CTXT_PROJECT_BUILD`、`..._ADD`、`..._START`、`..._PROPERTIES` 等,見 `SharedCmdPlace.vsct`)重新掛上去,再用 `IProjectItemContextMenuProvider` 讓 `ProjectRoot` 節點指向它。placement 是「附加」而非「搬移」,其他專案型別不受影響。
+**換掉專案節點選單的做法行不通**(試過並確認失敗):Dependencies 節點可以用 `IProjectItemContextMenuProvider` 改掛私有選單,但**專案根節點的選單不走這個擴充點**——即使 provider 對 `ProjectTreeFlags.Common.ProjectRoot` 回傳私有選單,右鍵出來的仍是 shell 的共用選單(NuGet 與 Manage User Secrets 都還在)。連帶地,為此準備的 `<CommandPlacements>` 重掛 11 個標準 group 也白做了。
 
-**代價**:清單是固定的——任何第三方擴充 placement 到 PROJNODE 的命令、以及 VS 未來新增的 group,都不會出現在這個選單裡,需要手動補。
+**正解是 CPS 的命令狀態覆寫擴充點**——不動選單,直接把命令標成不可見:
+
+```csharp
+[ExportCommandGroup("25fd982b-8cae-4cbd-a440-e03ffccde106")]   // NuGet 的 guidNuGetDialogCmdSet
+[AppliesTo("OrikaGo")]
+[Order(1000)]
+internal sealed class GoHiddenNuGetCommandsHandler : IAsyncCommandGroupHandler
+{
+    public Task<CommandStatusResult> GetCommandStatusAsync(
+        IImmutableSet<IProjectTree> items, long commandId, bool focused,
+        string commandText, CommandStatus progressiveStatus)
+    {
+        if (commandId == 0x100 || commandId == 0x200)          // cmdidAddPackageDialog(ForSolution)
+            return Task.FromResult(new CommandStatusResult(
+                true, commandText, progressiveStatus | CommandStatus.Invisible));
+        return CommandStatusResult.Unhandled.AsTask();
+    }
+    ...
+}
+```
+
+`AppliesTo` 讓它只作用在 Go 專案,其他專案型別的 NuGet 完全不受影響。實測結果:「管理 NuGet 套件」從專案右鍵選單消失,其餘命令(建置/發行/加入/偵錯/卸載/屬性…)一個不少。**這個擴充點可以隱藏任何別人放上去的命令,只要知道它的 command set GUID 與 ID(反編譯對方的 package 即可取得)。**
 
 ## 四、工具與環境
 

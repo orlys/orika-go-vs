@@ -23,31 +23,18 @@ namespace OrikaGo.LanguageService
     {
         private static readonly Guid OrikaGoCmdSet = new Guid("1F6D3B85-42A9-4E0C-9B7D-E85C2A94F316");
         private const int MenuGoDependenciesContext = 0x2000;
-        private const int MenuGoProjectContext = 0x2001;
 
         public bool TryGetContextMenu(IProjectTree projectItem, out Guid menuCommandGuid, out int menuCommandId)
         {
-            if (projectItem != null)
+            // Only the dependencies root is remapped. The project ROOT node's
+            // menu does NOT come through this extension point (tried: the
+            // shared menu kept showing), so NuGet's command is hidden with a
+            // command-group handler instead - see GoHiddenNuGetCommandsHandler.
+            if (projectItem != null && projectItem.Flags.Contains("DependenciesRootNode"))
             {
-                // The dependencies root carries the managed project system's
-                // "DependenciesRootNode" custom flag.
-                if (projectItem.Flags.Contains("DependenciesRootNode"))
-                {
-                    menuCommandGuid = OrikaGoCmdSet;
-                    menuCommandId = MenuGoDependenciesContext;
-                    return true;
-                }
-
-                // The project root goes to the private menu too, purely to
-                // escape NuGet's placement on the shared project menu (see
-                // OrikaGoPackage.vsct); the standard groups are re-hosted
-                // there so the menu keeps its usual contents.
-                if (projectItem.Flags.Contains(ProjectTreeFlags.Common.ProjectRoot))
-                {
-                    menuCommandGuid = OrikaGoCmdSet;
-                    menuCommandId = MenuGoProjectContext;
-                    return true;
-                }
+                menuCommandGuid = OrikaGoCmdSet;
+                menuCommandId = MenuGoDependenciesContext;
+                return true;
             }
 
             menuCommandGuid = default;
