@@ -56,6 +56,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="AddModuleReferenceDialog.cs" />
+    <Compile Include="DelveProxy.cs" />
     <Compile Include="DelveServer.cs" />
     <Compile Include="GoAdapterLauncher.cs" />
     <Compile Include="GoContentTypeDefinitions.cs" />

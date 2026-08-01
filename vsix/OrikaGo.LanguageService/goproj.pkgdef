@@ -56,7 +56,17 @@
 // 偵錯 → 附加至處理序 that always errors, so it stays 0 until the missing
 // piece is found. See docs/debug-parity-plan.md (P1).
 "Attach"=dword:00000000
-"AdapterLauncher"="{B7A3F2D9-5C81-4E6A-9F42-8D0E3C7B6A25}"
+// The launcher is registered in the ExtensibilityObjects section below; the
+// "AdapterLauncher" value is the deprecated spelling and makes the host log
+// a migration warning on every session.
+//
+// MemoryReferencesAreAddresses=0: delve's readMemory accepts ONLY the
+// references it handed out itself (referencesCollection), never a raw
+// address - so letting the host treat any address as a memory reference
+// makes it probe readMemory with the frame's instruction pointer on every
+// stop, which delve rejects ("unknown memoryReference") and the user sees
+// as an error dialog on every breakpoint hit.
+"MemoryReferencesAreAddresses"=dword:00000000
 // Exception Settings integration: dlv >= 1.26 reports
 // exceptionBreakpointFilters (unrecovered-panic / runtime-fatal-throw), and
 // supportsExceptionInfoRequest feeds the Exception Helper on a panic.
@@ -67,7 +77,8 @@
 // this to 0 from the initialize response even if set.
 "SetNextStatement"=dword:00000000
 "Name"="Go Debugger (Delve)"
-"Language"="Go"
+// No "Language" value: the host ignores it when a LanguageMappings section
+// exists (and warns about it), and that section is defined below.
 "LocalsScopeName"="Locals"
 "SuppressModulesRequestOnAttach"=dword:00000001
 

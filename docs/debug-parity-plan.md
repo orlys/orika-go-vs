@@ -15,6 +15,8 @@
 >
 >   根因在 `service/dap/server.go`:`readMemory` 只接受 dlv 自己登記過的參考(`referencesCollection.get`),而 `isAddressable()` **只對 `reflect.Slice` 與 `reflect.String` 回 true**——只有這兩類變數會在 `variables` 回應中得到 `memoryReference`。VS 記憶體視窗手動輸入的位址是 VS 自行計算的,不在 dlv 表中,必然被拒。
 >   **使用方式**:對 string 或 slice 變數在 Locals/監看視窗右鍵→「檢視記憶體」才有效;手動輸入位址與其他型別皆不支援。要放寬需上游 PR(讓 dlv 接受任意位址,DAP 規範本身是允許的)。
+>
+>   **更嚴重的衍生問題與其修法(已解決)**:這個限制原本不只影響記憶體視窗——VS 在**每次中斷**都會用 frame 的 instruction pointer 送一個 `readMemory`(`count=0`)例行探測,被 delve 拒絕後直接以錯誤呈現給使用者(協定記錄實證:`stopped` → `threads` → `stackTrace` ×2 → `readMemory(PC, count=0)` → 失敗 → `ERROR: Unexpected error`)。嘗試過 `MemoryReferencesAreAddresses=0` 無效(探測照送)。最終解法是 `DelveProxy`:一層單連線 DAP relay,只把「unknown memoryReference 失敗回應」改寫成 delve 自己對合法零長度讀取所回的成功空回應,其餘訊息逐位元組原樣轉發。實測結果:同一情境的 session ERROR 由 5 → 0、`unknown memoryReference` 由 2 → 0,中斷點/變數/呼叫堆疊行為不變。
 
 ## 一、中斷點類
 

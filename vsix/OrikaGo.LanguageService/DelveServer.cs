@@ -113,7 +113,9 @@ namespace OrikaGo.LanguageService
                 }
 
                 _server = process;
-                return port;
+                // The host talks to the relay, not to dlv directly - see
+                // DelveProxy for the one behaviour it changes.
+                return DelveProxy.Start(port);
             }
             catch
             {

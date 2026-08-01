@@ -263,7 +263,11 @@ Console.WriteLine(result.Success);
 - **delve 版本**:升級至 1.27.0(解鎖 exceptionBreakpointFilters、hitCondition capability、記憶體讀寫);dlv 以 `--check-go-version=false` 啟動——delve 只「支援」最近兩個 Go 版本,否則舊工具鏈建置的二進位會被硬拒(modal 錯誤)
 - **Go 工具鏈**:以 `go env -w GOTOOLCHAIN=go1.25.12+auto` 切至 1.25(官方機制,免重裝;二進位由 1.25 建置後 delve 的版本 WARNING 消失)。連帶處理:`orika-goc` 的 `x/tools` 升至 v0.48.0(v0.24 在 go1.25 下編譯失敗——token 內部布局改變)、gopls 升至新版(0.14.2 與 1.25 不匹配)、**工具鏈版本納入增量建置輸入**(`go version` 寫入 `go.build.args`,否則 GOTOOLCHAIN 切換後會靜默沿用舊工具鏈建置的二進位)。compiler 測試 26/26 於 1.25 下全數通過
 
-**反組譯視窗**可用(dlv 的 `disassemble` 回傳真實 Go 組語,`AddressBP=1` 可在其中下中斷點)。**記憶體視窗**只在「對 string 或 slice 變數右鍵 →『檢視記憶體』」時有效——dlv 的 `readMemory` 僅接受它自己在 `variables` 回應中登記的參考,而它只為 slice/string 產生參考(`isAddressable`);在記憶體視窗**手動輸入位址**或對 `int` 等型別會得到 `Unable to read memory: unknown memoryReference`,這是 delve 的設計限制,非本平台缺陷(詳見 `docs/debug-parity-plan.md`)。
+**反組譯視窗**可用(dlv 的 `disassemble` 回傳真實 Go 組語,`AddressBP=1` 可在其中下中斷點)。
+
+**記憶體讀取與 `DelveProxy`**:VS 在**每次中斷**都會用當下的指令指標位址送一個 `readMemory`(`count=0`)例行探測,但 delve 的 `readMemory` 只接受**它自己發出過**的參考(`referencesCollection`,而 `isAddressable()` 只涵蓋 string 與 slice),因此原始位址一律被拒,使用者每次命中中斷點都會看到 `Unable to read memory: unknown memoryReference`。engine metric `MemoryReferencesAreAddresses=0` 擋不住這個探測(實測)。
+
+因此 SDK 在 DAH 與 dlv 之間插入一層極薄的 DAP relay(`DelveProxy`):雙向逐位元組轉發,**唯一**的改動是把「`readMemory` 失敗且訊息為 unknown memoryReference」改寫成 delve 自己對合法零長度讀取所回的成功空回應。實測:探測回 `success:true`、session 的 ERROR 由 5 降為 0。真實的記憶體讀取(對 string／slice 變數右鍵→檢視記憶體,使用 delve 自己給的參考)仍原封不動交給 delve;手動輸入任意位址則會安靜地得到空結果而非錯誤(delve 不支援,詳見 `docs/debug-parity-plan.md`)。
 
 已知限制:`SetNextStatement`(拖移黃箭頭)關閉——delve 任何版本都未實作 DAP 的 `goto`,詳見規劃文件專節;`ExceptionConditions`(依模組略過例外)同因 delve 未支援而關閉;**附加至處理序**目前關閉(實作完成但 VS 拒絕透過本 engine attach,診斷記錄見規劃文件)。
 
