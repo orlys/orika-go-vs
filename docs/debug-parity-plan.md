@@ -6,6 +6,15 @@
 > - **Attach to Process:未完成(卡住,需要新資訊)**。已完成的部分:`GoAdapterLauncher`(`IAdapterLauncher`,`UpdateLaunchOptions` 產生 `{"$debugServer":port,"request":"attach","mode":"local","processId":N}`)、`DelveServer` 抽出供 F5/attach 共用、COM CLSID 註冊。**卡點**:透過 Go engine attach 一律以 `HRESULT 0x8971001E` 失敗,且失敗發生在 **adapter launcher 被呼叫之前**——dlv 從未啟動、ActivityLog 無記錄、DAH 協定無流量。對照組:同一個行程用 **Native engine attach 成功**,證明目標與 attach 管線本身沒問題。已嘗試且皆無效的註冊變體:(1) `AdapterLauncher` metric 值、(2) `ExtensibilityObjects` 編號子鍵、(3) `PortSupplier` 由單值改為編號子鍵列表。
 >   **下一步方向**:0x8971001E 未見於 msdbg.h,需要更底層的診斷——建議用 VS 的 debugger ETW/DebugDiag 追 `IDebugEngine2::Attach` 呼叫鏈,或改以最小 DAH sample engine 反推缺少的 metric(可能與 `Programs`/`ProgramProvider`/`CodeType` 宣告有關,DAH 的 attach 是否需要額外的 program provider 尚未查清)。
 >   目前 `Attach=0`,避免在「附加至處理序」給出一個必定失敗的程式碼類型。
+> - **反組譯視窗:可用**(以 DAP client 實測:`disassemble` 回傳真實 Go 組語)。無須額外註冊——dlv 回報 `supportsDisassembleRequest=true`,DAH 於 initialize 後執行期開啟 `Disassembly`;`AddressBP=1` 已靜態開啟,可在反組譯視窗內下中斷點。
+> - **記憶體視窗:部分可用(dlv 的設計限制,非我方缺陷)**。實測 dlv 1.27.0 的 `readMemory`:
+>   - `name`(string)→ `memoryReference=0x7ff76062bfc5` → 讀取成功(回傳 base64 = 字串內容)✔
+>   - `numbers`([]int)→ `memoryReference=0xc0000b6000` → 有效 ✔
+>   - `counter`(int)→ **完全沒有 memoryReference** ✘
+>   - 任意原始位址(= 在記憶體視窗手動輸入位址)→ `Unable to read memory: unknown memoryReference` ✘
+>
+>   根因在 `service/dap/server.go`:`readMemory` 只接受 dlv 自己登記過的參考(`referencesCollection.get`),而 `isAddressable()` **只對 `reflect.Slice` 與 `reflect.String` 回 true**——只有這兩類變數會在 `variables` 回應中得到 `memoryReference`。VS 記憶體視窗手動輸入的位址是 VS 自行計算的,不在 dlv 表中,必然被拒。
+>   **使用方式**:對 string 或 slice 變數在 Locals/監看視窗右鍵→「檢視記憶體」才有效;手動輸入位址與其他型別皆不支援。要放寬需上游 PR(讓 dlv 接受任意位址,DAP 規範本身是允許的)。
 
 ## 一、中斷點類
 

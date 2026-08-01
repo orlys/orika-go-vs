@@ -263,7 +263,9 @@ Console.WriteLine(result.Success);
 - **delve 版本**:升級至 1.27.0(解鎖 exceptionBreakpointFilters、hitCondition capability、記憶體讀寫);dlv 以 `--check-go-version=false` 啟動——delve 只「支援」最近兩個 Go 版本,否則舊工具鏈建置的二進位會被硬拒(modal 錯誤)
 - **Go 工具鏈**:以 `go env -w GOTOOLCHAIN=go1.25.12+auto` 切至 1.25(官方機制,免重裝;二進位由 1.25 建置後 delve 的版本 WARNING 消失)。連帶處理:`orika-goc` 的 `x/tools` 升至 v0.48.0(v0.24 在 go1.25 下編譯失敗——token 內部布局改變)、gopls 升至新版(0.14.2 與 1.25 不匹配)、**工具鏈版本納入增量建置輸入**(`go version` 寫入 `go.build.args`,否則 GOTOOLCHAIN 切換後會靜默沿用舊工具鏈建置的二進位)。compiler 測試 26/26 於 1.25 下全數通過
 
-已知限制:`SetNextStatement`(拖移黃箭頭)關閉——delve 任何版本都未實作 DAP 的 `goto`,詳見規劃文件專節;`ExceptionConditions`(依模組略過例外)同因 delve 未支援而關閉。
+**反組譯視窗**可用(dlv 的 `disassemble` 回傳真實 Go 組語,`AddressBP=1` 可在其中下中斷點)。**記憶體視窗**只在「對 string 或 slice 變數右鍵 →『檢視記憶體』」時有效——dlv 的 `readMemory` 僅接受它自己在 `variables` 回應中登記的參考,而它只為 slice/string 產生參考(`isAddressable`);在記憶體視窗**手動輸入位址**或對 `int` 等型別會得到 `Unable to read memory: unknown memoryReference`,這是 delve 的設計限制,非本平台缺陷(詳見 `docs/debug-parity-plan.md`)。
+
+已知限制:`SetNextStatement`(拖移黃箭頭)關閉——delve 任何版本都未實作 DAP 的 `goto`,詳見規劃文件專節;`ExceptionConditions`(依模組略過例外)同因 delve 未支援而關閉;**附加至處理序**目前關閉(實作完成但 VS 拒絕透過本 engine attach,診斷記錄見規劃文件)。
 
 端對端驗證(DTE 自動化,DAP 協定記錄佐證):`main.go` 設中斷點 → F5 → dlv 啟動、`setBreakpoints` 成功、`stopped(reason=breakpoint)` 實際命中;區域變數(含 `chan string 2/3` 這種 Go 原生型別)、呼叫堆疊(`main.main → runtime.main`)、goroutine 清單(`[Go 1..n]`)全部可見;改 `StartArguments` 重跑,於中斷點求值 `os.Args` 確認新參數 `["gamma","delta","epsilon"]` 生效;繼續執行至正常結束。另一個踩坑記錄(命令不出現的三連環,全中才會好):(1) VSCT 編譯後必須靠 `VSPackage.resx` 的 `MergeWithCTO=true` 才會嵌進組件資源(`Menus.ctmenu`);(2) 套件註冊必須 `RegisterWithCodebase=true`——預設只寫組件顯示名稱(`PublicKeyToken=null`),非 GAC 的擴充組件無從解析,shell 載不了套件、CTMENU 合併靜默讀到空;(3) shell 依 `Menus` 版本號快取合併結果,修好資源後必須把 `ProvideMenuResource` 版本 +1(或跑 `devenv /updateconfiguration`,`install-vsix.ps1` 現在每次安裝後都會跑)。驗證:`DTE.Commands.Item` 確認命令進入命令表,名稱 `ProjectandSolutionContextMenus.Project.加入Go模組參考`。
 
