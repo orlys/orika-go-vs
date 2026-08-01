@@ -176,6 +176,20 @@ HasUnsupportedProjectCapability = IsCapabilityMatch("SharedAssetsProject")
 msbuild x.goproj -getItem:ProjectCapability -restore
 ```
 
+**但 capability 正確也不會讓「管理 NuGet 套件」從選單消失。** 反編譯 `NuGetPackage.BeforeQueryStatusForAddPackageDialog` 可以看到原因:
+
+```csharp
+val.Visible = GetIsSolutionOpen();                              // 只要方案開著就顯示
+val2.Enabled = IsSolutionExistsAndNotDebuggingAndNotBuilding()
+               && await HasActiveLoadedSupportedProjectAsync(); // capability 只影響這裡
+```
+
+`Visible` 與專案型別完全無關,所以 capability 做對的結果是「命令仍在,點下去回報 *The project ... is unsupported*」。
+
+要真正移除,只能讓專案節點**不使用 shell 的共用選單**:NuGet 是把命令 placement 到 `IDM_VS_CTXT_PROJNODE`(其 group `IDG_VS_CTXT_PACKAGEMANAGEMENT` = 0x02F0 **不在** `SharedCmdPlace.vsct` 對 PROJNODE 的標準 placement 清單中)。因此做法是:自訂一個 context menu,用 `<CommandPlacements>` 把標準的 11 個 group(`IDG_VS_CTXT_PROJECT_BUILD`、`..._ADD`、`..._START`、`..._PROPERTIES` 等,見 `SharedCmdPlace.vsct`)重新掛上去,再用 `IProjectItemContextMenuProvider` 讓 `ProjectRoot` 節點指向它。placement 是「附加」而非「搬移」,其他專案型別不受影響。
+
+**代價**:清單是固定的——任何第三方擴充 placement 到 PROJNODE 的命令、以及 VS 未來新增的 group,都不會出現在這個選單裡,需要手動補。
+
 ## 四、工具與環境
 
 ### 16. VSIXInstaller 退出碼 2004(BlockingProcesses)

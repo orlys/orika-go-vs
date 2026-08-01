@@ -28,6 +28,21 @@
           <ButtonText>Go Dependencies</ButtonText>
         </Strings>
       </Menu>
+
+      <!-- A private replacement for the project-node context menu. NuGet
+           places "Manage NuGet Packages..." onto the shell's shared
+           IDM_VS_CTXT_PROJNODE and hardcodes its Visible to "a solution is
+           open" (NuGetPackage.BeforeQueryStatusForAddPackageDialog) - project
+           capabilities only gate Enabled, which is why the item stayed
+           visible and answered "project is unsupported" when clicked. The
+           only way to remove it is to stop using that shared menu: this menu
+           re-hosts the standard project groups listed in CommandPlacements
+           below, and NuGet's group is simply not among them. -->
+      <Menu guid="guidOrikaGoCmdSet" id="menuGoProjectContext" type="Context" priority="0x0000">
+        <Strings>
+          <ButtonText>Go Project</ButtonText>
+        </Strings>
+      </Menu>
     </Menus>
 
     <Groups>
@@ -56,10 +71,52 @@
     </Buttons>
   </Commands>
 
+  <!-- Re-host the standard project-node groups on the private menu above.
+       A placement is additive: these groups keep working on the shell's own
+       IDM_VS_CTXT_PROJNODE for every other project type. The list mirrors
+       SharedCmdPlace.vsct's placements onto IDM_VS_CTXT_PROJNODE, minus
+       anything NuGet contributes. Priorities are kept identical so the menu
+       reads in the familiar order.
+       ponytail: a fixed list - a group VS adds in a future update would not
+       appear here until this list is updated. -->
+  <CommandPlacements>
+    <CommandPlacement guid="guidSHLMainMenu" id="IDG_VS_CTXT_PROJECT_BUILD" priority="0x0100">
+      <Parent guid="guidOrikaGoCmdSet" id="menuGoProjectContext" />
+    </CommandPlacement>
+    <CommandPlacement guid="guidSHLMainMenu" id="IDG_VS_CTXT_PROJWIN_SCOPE" priority="0x0108">
+      <Parent guid="guidOrikaGoCmdSet" id="menuGoProjectContext" />
+    </CommandPlacement>
+    <CommandPlacement guid="guidSHLMainMenu" id="IDG_VS_CTXT_COMPILELINK" priority="0x0180">
+      <Parent guid="guidOrikaGoCmdSet" id="menuGoProjectContext" />
+    </CommandPlacement>
+    <CommandPlacement guid="guidSHLMainMenu" id="IDG_VS_CTXT_PROJECT_BUILDDEPENDENCIES" priority="0x0200">
+      <Parent guid="guidOrikaGoCmdSet" id="menuGoProjectContext" />
+    </CommandPlacement>
+    <CommandPlacement guid="guidSHLMainMenu" id="IDG_VS_CTXT_PROJECT_ADD" priority="0x0300">
+      <Parent guid="guidOrikaGoCmdSet" id="menuGoProjectContext" />
+    </CommandPlacement>
+    <CommandPlacement guid="guidSHLMainMenu" id="IDG_VS_CTXT_PROJECT_START" priority="0x0400">
+      <Parent guid="guidOrikaGoCmdSet" id="menuGoProjectContext" />
+    </CommandPlacement>
+    <CommandPlacement guid="guidSHLMainMenu" id="IDG_VS_CTXT_PROJECT_TRANSFER" priority="0x0700">
+      <Parent guid="guidOrikaGoCmdSet" id="menuGoProjectContext" />
+    </CommandPlacement>
+    <CommandPlacement guid="guidSHLMainMenu" id="IDG_VS_CTXT_PROJECT_UNLOADRELOAD" priority="0x0780">
+      <Parent guid="guidOrikaGoCmdSet" id="menuGoProjectContext" />
+    </CommandPlacement>
+    <CommandPlacement guid="guidSHLMainMenu" id="IDG_VS_CTXT_PROJECT_EXPLORE" priority="0x07A0">
+      <Parent guid="guidOrikaGoCmdSet" id="menuGoProjectContext" />
+    </CommandPlacement>
+    <CommandPlacement guid="guidSHLMainMenu" id="IDG_VS_CTXT_PROJECT_PROPERTIES" priority="0x0800">
+      <Parent guid="guidOrikaGoCmdSet" id="menuGoProjectContext" />
+    </CommandPlacement>
+  </CommandPlacements>
+
   <Symbols>
     <GuidSymbol name="guidOrikaGoPackage" value="{9C4E9A2B-7D31-4F5C-A1E8-52B60D3F8E74}" />
     <GuidSymbol name="guidOrikaGoCmdSet" value="{1F6D3B85-42A9-4E0C-9B7D-E85C2A94F316}">
       <IDSymbol name="menuGoDependenciesContext" value="0x2000" />
+      <IDSymbol name="menuGoProjectContext" value="0x2001" />
       <IDSymbol name="grpDependenciesContext" value="0x1010" />
       <IDSymbol name="cmdidAddGoModuleReference" value="0x0100" />
     </GuidSymbol>
