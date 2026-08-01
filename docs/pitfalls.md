@@ -1,5 +1,7 @@
 # 踩坑記錄:在 Visual Studio 上做 Go 開發平台
 
+> Written in Traditional Chinese. English readers: this file is the project's engineering log of pitfalls — symptom, root cause, fix, and how each was diagnosed. Machine translation carries it reasonably well; the code, GUIDs, registry keys and command names in it are language-neutral.
+
 這份文件記錄實際踩過的坑——**症狀、根因、解法、以及當初是怎麼查出來的**。目的不是描述現在的架構(那在 README),而是讓下一次不要重走同樣的死路。
 
 規則:每一條都是真的踩過並解決(或明確卡住)的,不是理論上的注意事項。
