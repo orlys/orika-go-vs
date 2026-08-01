@@ -271,7 +271,9 @@ Console.WriteLine(result.Success);
 
 因此 SDK 在 DAH 與 dlv 之間插入一層極薄的 DAP relay(`DelveProxy`):雙向逐位元組轉發,**唯一**的改動是把「`readMemory` 失敗且訊息為 unknown memoryReference」改寫成 delve 自己對合法零長度讀取所回的成功空回應。實測:探測回 `success:true`、session 的 ERROR 由 5 降為 0。真實的記憶體讀取(對 string／slice 變數右鍵→檢視記憶體,使用 delve 自己給的參考)仍原封不動交給 delve;手動輸入任意位址則會安靜地得到空結果而非錯誤(delve 不支援,詳見 `docs/debug-parity-plan.md`)。
 
-已知限制:`SetNextStatement`(拖移黃箭頭)關閉——delve 任何版本都未實作 DAP 的 `goto`,詳見規劃文件專節;`ExceptionConditions`(依模組略過例外)同因 delve 未支援而關閉;**附加至處理序**目前關閉(實作完成但 VS 拒絕透過本 engine attach,診斷記錄見規劃文件)。
+**附加至處理序**可用:偵錯 → 附加至處理序 → 選擇 Go 程式後,程式碼類型選「Go Debugger (Delve)」。`GoProgramProvider` 會掃描目標執行檔的 Go build-info 標記,只對真正的 Go 行程提供這個選項。卸離後目標程式繼續執行。
+
+已知限制:`SetNextStatement`(拖移黃箭頭)關閉——delve 任何版本都未實作 DAP 的 `goto`,詳見規劃文件專節;`ExceptionConditions`(依模組略過例外)同因 delve 未支援而關閉。
 
 端對端驗證(DTE 自動化,DAP 協定記錄佐證):`main.go` 設中斷點 → F5 → dlv 啟動、`setBreakpoints` 成功、`stopped(reason=breakpoint)` 實際命中;區域變數(含 `chan string 2/3` 這種 Go 原生型別)、呼叫堆疊(`main.main → runtime.main`)、goroutine 清單(`[Go 1..n]`)全部可見;改 `StartArguments` 重跑,於中斷點求值 `os.Args` 確認新參數 `["gamma","delta","epsilon"]` 生效;繼續執行至正常結束。另一個踩坑記錄(命令不出現的三連環,全中才會好):(1) VSCT 編譯後必須靠 `VSPackage.resx` 的 `MergeWithCTO=true` 才會嵌進組件資源(`Menus.ctmenu`);(2) 套件註冊必須 `RegisterWithCodebase=true`——預設只寫組件顯示名稱(`PublicKeyToken=null`),非 GAC 的擴充組件無從解析,shell 載不了套件、CTMENU 合併靜默讀到空;(3) shell 依 `Menus` 版本號快取合併結果,修好資源後必須把 `ProvideMenuResource` 版本 +1(或跑 `devenv /updateconfiguration`,`install-vsix.ps1` 現在每次安裝後都會跑)。驗證:`DTE.Commands.Item` 確認命令進入命令表,名稱 `ProjectandSolutionContextMenus.Project.加入Go模組參考`。
 

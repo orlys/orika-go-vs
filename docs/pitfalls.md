@@ -123,18 +123,58 @@ IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners()
 
 缺口 100% 在 delve:`goto`/`gotoTargets` 在任何版本都回 unsupported,delve 連 CLI 都沒有 jump。**就算 pkgdef 硬寫 `SetNextStatement=1` 也沒用**——host 會依 initialize 回應在執行期把 metric 覆寫回 0。唯一路徑是上游貢獻 delve。
 
-### 15. Attach to Process:仍然卡住(未解)
+### 15. Attach to Process 的 `0x8971001E`:缺的是 **ProgramProvider**
 
-程式碼與註冊都完成,但透過本 engine attach 一律 `HRESULT 0x8971001E`,且**失敗發生在 adapter launcher 被呼叫之前**(dlv 從未啟動、ActivityLog 無記錄、DAH 協定零流量)。對照組:同一行程用 **Native engine attach 成功**。
+症狀:透過自訂 engine attach 一律 `HRESULT 0x8971001E`,且**失敗發生在 adapter launcher 被呼叫之前**——dlv 從未啟動、ActivityLog 無記錄、DAH 協定零流量。對照組:同一行程用 Native engine attach 成功。
 
-已試過且無效的三種註冊形狀:
-1. `"AdapterLauncher"` metric 值(host 會警告這是 deprecated 拼法)
-2. `ExtensibilityObjects` 編號子鍵(現行拼法)
-3. `PortSupplier` 由單值改為**編號子鍵列表**(vsdbg 的真實形狀)
+**根因**:attach 流程需要 `IDebugProgramProvider2` 回答「這個行程裡有沒有屬於你這個 engine 的 program」。沒註冊 program provider,shell 找不到可附加的 program,在任何自訂程式碼執行前就放棄。
 
-0x8971001E 不在 `msdbg.h`。下一步需要不同性質的資訊:debugger ETW 追 `IDebugEngine2::Attach` 呼叫鏈,或用 VSDebugAdapterHost 的 sample engine 反推缺少的 metric(懷疑與 program provider / code type 宣告有關)。目前 `Attach=0`,避免給出一個必定失敗的程式碼類型。
+**曾經浪費時間的三個錯誤方向**(都與根因無關):
+1. `"AdapterLauncher"` metric 值 → 它只是 deprecated 拼法,換成 `ExtensibilityObjects` 也一樣失敗
+2. `ExtensibilityObjects` 編號子鍵 → 正確的現行拼法,但不是缺口
+3. 把 `PortSupplier` 從單值改成**編號子鍵列表** → **這是走錯方向**:子鍵形狀屬於遠端/vsdbg 註冊,本機 attach 用的是**單值**
+
+**正確做法**(全部照 JavaScript/TypeScript adapter 抄——它是唯一做本機 attach 的 in-box DAH engine):
+
+```
+"Attach"=dword:00000001
+"AutoSelectPriority"=dword:00000004
+"PortSupplier"="{708C1ECA-FF48-11D2-904F-00C04FA302A1}"   ; 單值,shell 預設本機 supplier
+"ProgramProvider"="{你的 provider CLSID}"
+"AlwaysLoadProgramProviderLocal"=dword:00000001
+```
+再加上 provider 的 COM CLSID 註冊(`Assembly`/`Class`/`InprocServer32`=mscoree/`CodeBase`/`ThreadingModel`=Free)。
+
+實作只要兩個小類別:`IDebugProgramProvider2`(`GetProviderProcessData` 在 `PFLAG_GET_PROGRAM_NODES`(0x10)查詢時回傳一個 program node,`Fields` 設 `PFIELD_PROGRAM_NODES`(0x1),其餘方法回 `E_FAIL`/`S_OK`)與 `IDebugProgramNode2`(只有 `GetEngineInfo` 回 engine GUID、`GetHostPid` 回 PID 有意義,`_V7` 系列全部 `E_FAIL`)。
+
+**找到答案的方法**:先在所有 pkgdef 中搜尋 DAH 的固定 CLSID `{DAB324E9-...}` 列出全部 DAH engine,比對誰有 `Attach=1`,發現 JS 的 `{3FBCC828}` 是唯一本機 attach 的例子,其註解直接寫著 `Debug attach and program provider`;再用 `ilspycmd -t ...AD7JSTSProgramProvider` 反編譯拿到精確契約。**「找一個做同樣事情的 in-box 元件並反編譯它」比猜 metric 有效得多。**
+
+附帶:讓 provider 只對真正的 Go 行程回報 program node,做法是掃描目標執行檔裡 Go linker 寫入的 build-info magic(`\xff Go buildinf:`),否則 code type 清單會對每個無關行程都出現 Go 偵錯器。
 
 ---
+
+### 15b. NuGet 判斷專案「支援與否」的實際運算式
+
+想讓 NuGet 的 UI 對自訂專案類型消失時,不必猜。`NuGet.VisualStudio.Common.dll` 的 `VsHierarchyUtility`(反編譯可得)是唯一權威:
+
+```csharp
+IsSupported(projectKind, hierarchy):
+    if (IsProjectCapabilityCompliant(hierarchy)) return true;
+    if (projectKind != null && ProjectType.IsSupported(projectKind))
+        return !HasUnsupportedProjectCapability(hierarchy);
+    return false;
+
+IsProjectCapabilityCompliant = IsCapabilityMatch(
+    "(AssemblyReferences + DeclaredSourceItems + UserSourceItems) | PackageReferences")   // + 是 AND
+HasUnsupportedProjectCapability = IsCapabilityMatch("SharedAssetsProject")
+```
+
+所以要讓 NuGet 認定「不支援」,必須同時**沒有** `PackageReferences`,而且 `AssemblyReferences`／`DeclaredSourceItems`／`UserSourceItems` 三者不齊(移除 `AssemblyReferences` 最無害——Go 專案本來就不參考 .NET 組件)。第二條分支對自訂專案類型 GUID 天然不成立。
+
+驗證 capability 用 MSBuild 而非肉眼:
+```powershell
+msbuild x.goproj -getItem:ProjectCapability -restore
+```
 
 ## 四、工具與環境
 
