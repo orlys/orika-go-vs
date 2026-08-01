@@ -1,5 +1,7 @@
 # epic — Orika.NET.Sdk 範例專案
 
+> 開發者請先看 [`docs/pitfalls.md`](docs/pitfalls.md):VS 擴充、CPS capability 與 delve 偵錯的實際踩坑記錄(症狀／根因／解法／診斷方式),幾乎全是沒有錯誤訊息的靜默失敗。偵錯功能規劃見 [`docs/debug-parity-plan.md`](docs/debug-parity-plan.md)。
+
 本專案示範如何使用 **Orika.NET.Sdk**（一個自訂的 MSBuild 專案 SDK）以 .NET CLI 工具鏈來建置、執行、測試與發佈 **Go** 程式。
 
 ## 什麼是 Orika.NET.Sdk？
