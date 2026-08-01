@@ -44,6 +44,11 @@ namespace OrikaGo.LanguageService
         expression: "OrikaGo",
         termNames: new[] { "OrikaGo" },
         termValues: new[] { "ActiveProjectCapability:OrikaGo" })]
+    // Autoload on that same context so the priority command target is in
+    // place as soon as a Go project is active - the Tools menu is built
+    // without ever touching a project node, so waiting for the command to be
+    // invoked would be too late.
+    [ProvideAutoLoad(UiContextGuidString, PackageAutoLoadFlags.BackgroundLoad)]
     public sealed class OrikaGoPackage : AsyncPackage
     {
         public const string PackageGuidString = "9C4E9A2B-7D31-4F5C-A1E8-52B60D3F8E74";
@@ -60,6 +65,35 @@ namespace OrikaGo.LanguageService
                 var commandId = new CommandID(CommandSet, CmdidAddGoModuleReference);
                 commandService.AddCommand(new OleMenuCommand(ExecuteAddGoModuleReference, commandId));
             }
+
+            // Hides NuGet's Tools-menu entries while a Go project is active;
+            // see GoNuGetCommandFilter for why this cannot be done with the
+            // project-scoped command handler.
+            if (await GetServiceAsync(typeof(SVsRegisterPriorityCommandTarget)) is IVsRegisterPriorityCommandTarget priorityTarget &&
+                await GetServiceAsync(typeof(SVsShellMonitorSelection)) is IVsMonitorSelection monitorSelection)
+            {
+                priorityTarget.RegisterPriorityCommandTarget(
+                    0, new GoNuGetCommandFilter(monitorSelection), out _priorityCommandTargetCookie);
+            }
+        }
+
+        private uint _priorityCommandTargetCookie;
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && _priorityCommandTargetCookie != 0)
+            {
+                ThreadHelper.JoinableTaskFactory.Run(async delegate
+                {
+                    await JoinableTaskFactory.SwitchToMainThreadAsync();
+                    if (await GetServiceAsync(typeof(SVsRegisterPriorityCommandTarget)) is IVsRegisterPriorityCommandTarget target)
+                    {
+                        target.UnregisterPriorityCommandTarget(_priorityCommandTargetCookie);
+                    }
+                    _priorityCommandTargetCookie = 0;
+                });
+            }
+            base.Dispose(disposing);
         }
 
         private void ExecuteAddGoModuleReference(object sender, EventArgs e)

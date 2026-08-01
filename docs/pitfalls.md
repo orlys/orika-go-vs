@@ -211,6 +211,14 @@ internal sealed class GoHiddenNuGetCommandsHandler : IAsyncCommandGroupHandler
 
 `AppliesTo` 讓它只作用在 Go 專案,其他專案型別的 NuGet 完全不受影響。實測結果:「管理 NuGet 套件」從專案右鍵選單消失,其餘命令(建置/發行/加入/偵錯/卸載/屬性…)一個不少。**這個擴充點可以隱藏任何別人放上去的命令,只要知道它的 command set GUID 與 ID(反編譯對方的 package 即可取得)。**
 
+### 15c. 主選單(Tools)的命令:只能「停用」,不能「隱藏」
+
+CPS 的命令群組處理器只參與**專案 context menu** 的命令路由,主選單命令根本不會經過它。要攔截主選單命令,唯一的鉤子是 `IVsRegisterPriorityCommandTarget` 註冊的優先權命令目標(它看得到每一個命令的 QueryStatus),搭配 `ProvideAutoLoad` 讓 package 在 UI context 成立時就載入(等到命令被叫用才載入已經太遲——選單早就畫好了)。
+
+**但結果只能是灰色**:`OLECMDF_INVISIBLE` 只有在**該命令自己的 .vsct 定義帶 `DynamicVisibility` 旗標**時才會被採納,而 NuGet 的命令沒有。於是 shell 照樣繪製該項目,只有「缺少 `OLECMDF_ENABLED`」這件事生效 → 呈現為停用。
+
+實測:Tools → NuGet 套件管理員 底下的「套件管理器主控台」與「管理方案的 NuGet 套件」變灰,子選單容器與「套件管理器設定」仍在。對於**不屬於自己的命令**,灰化就是天花板;真要讓項目消失,只剩「停用整個 NuGet 擴充」這種影響全 IDE 的手段。用 `IVsMonitorSelection.IsCmdUIContextActive` 綁定 UI context,可確保切換到 C# 專案時 NuGet 立刻恢復正常。
+
 ## 四、工具與環境
 
 ### 16. VSIXInstaller 退出碼 2004(BlockingProcesses)
