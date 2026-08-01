@@ -51,7 +51,7 @@ Dependencies 節點下與 .NET 相關的子節點（組件／COM／WinRT 參考�
 
 Go 專案的相依一律走 go.mod——**NuGet 對 `.goproj` 是完全隱形的**：
 
-- 「管理 NuGet 套件」等 UI 不出現（SDK 在 import 後移除 `PackageReferences` capability，且不再自行設定 `RestoreProjectStyle`）；
+- 「管理 NuGet 套件」不出現在專案右鍵選單：SDK 移除 `PackageReferences`／`AssemblyReferences` capability（讓 NuGet 判定專案不支援），VSIX 再以 CPS 的 `IAsyncCommandGroupHandler`（`GoHiddenNuGetCommandsHandler`，`AppliesTo("OrikaGo")`）把該命令標為不可見。**兩者缺一不可**——NuGet 的可見性只看「方案是否開啟」，與專案型別無關，單靠 capability 只會讓命令留在選單上、點下去回報「專案不支援」；
 - **不需要 restore**：`SkipResolvePackageAssets=true` 讓建置完全不要求 `obj/project.assets.json`（VS 對 .goproj 也不會執行 NuGet 還原）；
 - **不需要 per-project nuget.config**：NuGet 僅剩的用途是 MSBuild 解析 `Sdk="Orika.NET.Sdk/1.0.0"` 這個 SDK 套件本身——把本機 feed 註冊到使用者層級一次即可（`dotnet nuget add source <repo>\packages --name orika-local --configfile %APPDATA%\NuGet\NuGet.Config`），或把 nupkg 發佈到自有 NuGet 伺服器。已驗證：清空全域快取後,無任何 nuget.config 的專案照常解析 SDK 並建置。
 
