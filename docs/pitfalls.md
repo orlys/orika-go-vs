@@ -211,6 +211,28 @@ internal sealed class GoHiddenNuGetCommandsHandler : IAsyncCommandGroupHandler
 
 `AppliesTo` 讓它只作用在 Go 專案,其他專案型別的 NuGet 完全不受影響。實測結果:「管理 NuGet 套件」從專案右鍵選單消失,其餘命令(建置/發行/加入/偵錯/卸載/屬性…)一個不少。**這個擴充點可以隱藏任何別人放上去的命令,只要知道它的 command set GUID 與 ID(反編譯對方的 package 即可取得)。**
 
+### 15b-2. 盤點並隱藏不適用的內建命令(通用配方)
+
+不必逐一反編譯各家 package 找 command set GUID/ID——**用 DTE 列舉即可**:
+
+```powershell
+foreach ($c in $dte.Commands) { "$($c.Name) | $($c.Guid) | $($c.ID)" }
+```
+
+名稱是 `情境.位置.命令` 格式(如 `ProjectandSolutionContextMenus.Project.ManageUserSecrets`),用關鍵字過濾就能一次拿到所有目標。實測取得並隱藏的項目:
+
+| 命令 | Command set | ID |
+|---|---|---|
+| 管理 NuGet 套件 | `{25FD982B-8CAE-4CBD-A440-E03FFCCDE106}` | 0x100 / 0x200 |
+| Pack | `{568ABDF7-D522-474D-9EED-34B5E5095BA5}` | 8192 / 8193 |
+| Publish… | `{1496A755-94DE-11D0-8C3F-00C04FC2AAE2}` | 2005 / 2006 |
+| Modernize | `{31760A92-B75C-472D-B977-7CAEAB0AF122}` | 1280 / 1296 |
+| Code Cleanup | `{160961B3-909D-4B28-9353-A1BEF587B4A6}` | 全組 |
+| 管理使用者祕密 | `{9C5B3619-FD0B-467C-B06D-FBEB1496FB1A}` | 1792 |
+| 加入 → 連線服務 | `{A114CF9C-BD45-4A48-92EF-D9BBBC0B3DF0}` | 17 / 19 |
+
+**子選單容器要整組隱藏**:Code Cleanup 是個子選單,只隱藏已知的幾個 ID 會留下空的容器;把該 command set 的所有 ID 都回報 Invisible(該 set 專屬於這個功能,不會誤傷)之後容器才一併消失。
+
 ### 15c. 主選單(Tools)的命令:只能「停用」,不能「隱藏」
 
 CPS 的命令群組處理器只參與**專案 context menu** 的命令路由,主選單命令根本不會經過它。要攔截主選單命令,唯一的鉤子是 `IVsRegisterPriorityCommandTarget` 註冊的優先權命令目標(它看得到每一個命令的 QueryStatus),搭配 `ProvideAutoLoad` 讓 package 在 UI context 成立時就載入(等到命令被叫用才載入已經太遲——選單早就畫好了)。
