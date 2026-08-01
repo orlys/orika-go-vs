@@ -9,6 +9,7 @@ using Microsoft.Build.Construction;
 using Microsoft.Build.Evaluation;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
+using DiagProcess = System.Diagnostics.Process;
 using Project = EnvDTE.Project;
 using Task = System.Threading.Tasks.Task;
 
@@ -34,7 +35,7 @@ namespace OrikaGo.LanguageService
     // the shell caches the merge PER VERSION - it never re-reads a version it
     // has already processed, so the fixed resource stayed invisible until the
     // version changed. Bump this whenever the vsct changes.
-    [ProvideMenuResource("Menus.ctmenu", 5)]
+    [ProvideMenuResource("Menus.ctmenu", 7)]
     // Lights up the vsct's uiContextGoProject when the ACTIVE project carries
     // the OrikaGo capability (declared by Orika.NET.Sdk), so the command only
     // appears on .goproj project nodes - evaluated by the shell without
@@ -55,6 +56,9 @@ namespace OrikaGo.LanguageService
         public const string UiContextGuidString = "A7B54C29-8E13-4D6F-92A5-3D1E7F60C8B2";
         private static readonly Guid CommandSet = new Guid("1F6D3B85-42A9-4E0C-9B7D-E85C2A94F316");
         private const int CmdidAddGoModuleReference = 0x0100;
+        private const int CmdidGoModTidy = 0x0101;
+        private const int CmdidGoGenerate = 0x0102;
+        private const int CmdidGoVet = 0x0103;
 
         protected override async Task InitializeAsync(CancellationToken cancellationToken, IProgress<ServiceProgressData> progress)
         {
@@ -64,6 +68,13 @@ namespace OrikaGo.LanguageService
             {
                 var commandId = new CommandID(CommandSet, CmdidAddGoModuleReference);
                 commandService.AddCommand(new OleMenuCommand(ExecuteAddGoModuleReference, commandId));
+
+                commandService.AddCommand(new OleMenuCommand(
+                    ExecuteGoModTidy, new CommandID(CommandSet, CmdidGoModTidy)));
+                commandService.AddCommand(new OleMenuCommand(
+                    ExecuteGoGenerate, new CommandID(CommandSet, CmdidGoGenerate)));
+                commandService.AddCommand(new OleMenuCommand(
+                    ExecuteGoVet, new CommandID(CommandSet, CmdidGoVet)));
             }
 
             // Hides NuGet's Tools-menu entries while a Go project is active;
@@ -137,6 +148,137 @@ namespace OrikaGo.LanguageService
             }
         }
 
+        /// <summary>
+        /// Runs "go mod tidy" in the selected project's directory. This is the
+        /// dependency-list counterpart of Code Cleanup (hidden for Go, since it
+        /// only runs Roslyn C#/VB fixers); source-level tidying - gofmt and
+        /// import organizing - is already handled by gopls.
+        /// </summary>
+        private void ExecuteGoModTidy(object sender, EventArgs e)
+            => RunGoCommand("mod tidy", GoStrings.TidyRunning, GoStrings.TidySucceeded, GoStrings.TidyFailed);
+
+        /// <summary>
+        /// go generate: runs the //go:generate directives. Nothing else invokes
+        /// it - by Go's design the build never does - so this is its only entry
+        /// point in the IDE.
+        /// </summary>
+        private void ExecuteGoGenerate(object sender, EventArgs e)
+            => RunGoCommand("generate ./...", GoStrings.GenerateRunning, GoStrings.GenerateSucceeded, GoStrings.GenerateFailed);
+
+        /// <summary>
+        /// go vet: also available during build via -p:RunGoVet=true, but a
+        /// one-shot run without rebuilding is what is usually wanted.
+        /// </summary>
+        private void ExecuteGoVet(object sender, EventArgs e)
+            => RunGoCommand("vet ./...", GoStrings.VetRunning, GoStrings.VetSucceeded, GoStrings.VetFailed);
+
+        /// <summary>
+        /// Runs a go subcommand in the selected project's directory, mirroring
+        /// its output into the "Orika Go" output pane. Failures surface both in
+        /// the pane and as a message box, because a silent non-zero exit is the
+        /// worst possible outcome for a one-click tool.
+        /// </summary>
+        private void RunGoCommand(string arguments, string runningText, string successText, Func<string, string> failureText)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            if (!(GetService(typeof(SDTE)) is DTE dte))
+            {
+                return;
+            }
+            string projectPath = GetActiveGoProjectPath(dte);
+            if (projectPath == null)
+            {
+                return;
+            }
+            string workingDirectory = Path.GetDirectoryName(projectPath);
+
+            dte.StatusBar.Text = runningText;
+            WriteToOutputPane("> go " + arguments + Environment.NewLine, activate: true);
+            try
+            {
+                var startInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "go",
+                    Arguments = arguments,
+                    WorkingDirectory = workingDirectory,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                };
+
+                using (var process = DiagProcess.Start(startInfo))
+                {
+                    // The go tools report progress and diagnostics on stderr;
+                    // read both so a full pipe can never block the process.
+                    string output = process.StandardOutput.ReadToEnd();
+                    string error = process.StandardError.ReadToEnd();
+                    process.WaitForExit();
+
+                    if (output.Length > 0) { WriteToOutputPane(output); }
+                    if (error.Length > 0) { WriteToOutputPane(error); }
+
+                    if (process.ExitCode == 0)
+                    {
+                        dte.StatusBar.Text = successText;
+                        WriteToOutputPane(successText + Environment.NewLine);
+                    }
+                    else
+                    {
+                        dte.StatusBar.Text = string.Empty;
+                        string message = string.IsNullOrWhiteSpace(error) ? output : error;
+                        ShowError(failureText(message.Trim()));
+                    }
+                }
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                dte.StatusBar.Text = string.Empty;
+                ShowError(GoStrings.GoCommandMissing);
+            }
+            catch (Exception ex)
+            {
+                dte.StatusBar.Text = string.Empty;
+                ShowError(failureText(ex.Message));
+            }
+        }
+
+        private Guid _outputPaneGuid = new Guid("6B7A1E4C-9D53-4A08-B2F7-1C5E8D3A9042");
+
+        private void WriteToOutputPane(string text, bool activate = false)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            if (!(GetService(typeof(SVsOutputWindow)) is IVsOutputWindow outputWindow))
+            {
+                return;
+            }
+            if (outputWindow.GetPane(ref _outputPaneGuid, out IVsOutputWindowPane pane) != 0 || pane == null)
+            {
+                outputWindow.CreatePane(ref _outputPaneGuid, "Orika Go", 1, 0);
+                outputWindow.GetPane(ref _outputPaneGuid, out pane);
+            }
+            if (pane == null)
+            {
+                return;
+            }
+            pane.OutputStringThreadSafe(text);
+            if (activate)
+            {
+                pane.Activate();
+            }
+        }
+
+        private void ShowError(string message)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            VsShellUtilities.ShowMessageBox(
+                this, message, GoStrings.MessageBoxTitle,
+                OLEMSGICON.OLEMSGICON_CRITICAL,
+                OLEMSGBUTTON.OLEMSGBUTTON_OK,
+                OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
+        }
+
         /// <summary>Full path of the selected project when it is a .goproj; otherwise null.</summary>
         private static string GetActiveGoProjectPath(DTE dte)
         {
@@ -208,3 +350,5 @@ namespace OrikaGo.LanguageService
         }
     }
 }
+
+

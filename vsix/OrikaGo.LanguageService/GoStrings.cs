@@ -38,6 +38,29 @@ namespace OrikaGo.LanguageService
             ? "無法加入 Go 模組參考：" + message
             : "Could not add the Go module reference: " + message;
 
+        public static string TidyRunning => IsChinese ? "正在執行 go mod tidy…" : "Running go mod tidy...";
+        public static string TidySucceeded => IsChinese
+            ? "go mod tidy 完成:go.mod／go.sum 已整理。"
+            : "go mod tidy finished; go.mod/go.sum are tidy.";
+        public static string TidyFailed(string message) => IsChinese
+            ? "go mod tidy 失敗:" + message
+            : "go mod tidy failed: " + message;
+        public static string GenerateRunning => IsChinese ? "正在執行 go generate…" : "Running go generate...";
+        public static string GenerateSucceeded => IsChinese ? "go generate 完成。" : "go generate finished.";
+        public static string GenerateFailed(string message) => IsChinese
+            ? "go generate 失敗:" + message
+            : "go generate failed: " + message;
+
+        public static string VetRunning => IsChinese ? "正在執行 go vet…" : "Running go vet...";
+        public static string VetSucceeded => IsChinese ? "go vet 完成:未發現問題。" : "go vet finished; no findings.";
+        public static string VetFailed(string message) => IsChinese
+            ? "go vet 回報問題:" + message
+            : "go vet reported findings: " + message;
+
+        public static string GoCommandMissing => IsChinese
+            ? "找不到 go 執行檔。請確認 Go 工具鏈已安裝且在 PATH 上。"
+            : "The go command was not found. Make sure the Go toolchain is installed and on PATH.";
+
         public static string GoExecutableMissing(string path) => IsChinese
             ? "找不到 Go 執行檔：" + path + "。請先建置專案。"
             : "Go executable not found: " + path + ". Build the project first.";
