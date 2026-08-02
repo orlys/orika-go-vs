@@ -11,7 +11,7 @@ Three artifacts ship together, and they do **not** all go to the same place.
 ## Build
 
 ```powershell
-./build-release.ps1          # -> ./dist, with SHA-256 for each file
+./scripts/build-release.ps1  # -> ./dist, with SHA-256 for each file
 ```
 
 The VSIX requires the Visual Studio extension-development workload, so this
@@ -62,4 +62,5 @@ The version lives in three places and they are deliberately independent:
 
 The git tag names the release as a whole and does not have to match any of
 them.
+
 

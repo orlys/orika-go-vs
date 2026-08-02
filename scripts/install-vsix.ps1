@@ -21,7 +21,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$repoRoot = $PSScriptRoot
+# The scripts live in scripts/, so the repository root is one level up.
+$repoRoot = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $repoRoot 'src/csharp/OrikaGo.LanguageService/OrikaGo.LanguageService.csproj'
 $vsix = Join-Path $repoRoot 'src/csharp/OrikaGo.LanguageService/bin/Release/OrikaGo.LanguageService.vsix'
 $extensionId = 'OrikaGo.LanguageService'
@@ -84,4 +85,5 @@ if (-not $match) {
 
 Write-Host "Installed $extensionId -> $($match[0].DirectoryName)"
 Write-Host "Restart Visual Studio for the extension to load."
+
 

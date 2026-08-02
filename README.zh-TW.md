@@ -177,7 +177,7 @@ main module (epic) does not contain package epic/MyTool
 SDK 原始檔位於 `sdk/Orika.NET.Sdk/`。修改後執行：
 
 ```powershell
-.\build-sdk.ps1
+.\scripts\build-sdk.ps1
 ```
 
 此指令碼會：
@@ -420,9 +420,10 @@ epic/
 ├── docs/                            # pitfalls.md、debug-parity-plan.md、releasing.md
 ├── img/                             # README 使用的截圖
 ├── nuget.config
-├── build-sdk.ps1                    # 將 SDK 打包到本機 feed
-├── build-release.ps1                # 產出所有可發布產物到 ./dist
-└── install-vsix.ps1                 # 重建並重新安裝擴充
+└── scripts/
+    ├── build-sdk.ps1                # 將 SDK 打包到本機 feed
+    ├── build-release.ps1            # 產出所有可發布產物到 ./dist
+    └── install-vsix.ps1             # 重建並重新安裝擴充
 ```
 
 Go 的測試檔案**必須與被測套件放在同一目錄**——這是 Go 工具鏈的規定而非偏好——因此 `test/` 底下只有 C# 測試專案，Go 測試仍留在 `samples/hello/greeting_test.go` 以及邊車原始碼旁。
@@ -506,6 +507,8 @@ Go 的測試檔案**必須與被測套件放在同一目錄**——這是 Go 工
 可自由使用、修改與再散布（含商業用途），條件是**著作權聲明與授權條款需隨之保留**。該聲明已隨 VSIX 內含（`LICENSE.txt`），兩個 NuGet 套件也以 `PackageLicenseExpression` 宣告，使用者取得套件時會自動收到。
 
 本軟體按現狀提供，不附任何擔保——另請參閱開頭的實驗性專案警告。
+
+
 
 
 

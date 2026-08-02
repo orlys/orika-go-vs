@@ -14,7 +14,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$repoRoot = $PSScriptRoot
+# The scripts live in scripts/, so the repository root is one level up.
+$repoRoot = Split-Path -Parent $PSScriptRoot
 $feedDir  = Join-Path $repoRoot 'packages'
 $sdkProj  = Join-Path $repoRoot 'sdk/Orika.NET.Sdk/Orika.NET.Sdk.csproj'
 
@@ -45,3 +46,4 @@ foreach ($cacheEntry in $cacheCandidates) {
 }
 
 Write-Host 'Done. Orika.NET.Sdk 1.0.0 is available from the local feed.' -ForegroundColor Green
+

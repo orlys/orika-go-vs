@@ -177,7 +177,7 @@ This target does not run during design-time builds (`DesignTimeBuild=true`) — 
 The SDK sources live in `sdk/Orika.NET.Sdk/`. After modifying them, run:
 
 ```powershell
-.\build-sdk.ps1
+.\scripts\build-sdk.ps1
 ```
 
 This script:
@@ -420,9 +420,10 @@ epic/
 ├── docs/                            # pitfalls.md, debug-parity-plan.md, releasing.md
 ├── img/                             # Screenshots used by the READMEs
 ├── nuget.config
-├── build-sdk.ps1                    # Pack the SDK into the local feed
-├── build-release.ps1                # Build every shippable artifact into ./dist
-└── install-vsix.ps1                 # Rebuild + reinstall the extension
+└── scripts/
+    ├── build-sdk.ps1                # Pack the SDK into the local feed
+    ├── build-release.ps1            # Build every shippable artifact into ./dist
+    └── install-vsix.ps1             # Rebuild + reinstall the extension
 ```
 
 Go test files must live next to the package they test — that is a Go toolchain
@@ -513,6 +514,8 @@ the VSIX as `LICENSE.txt` and is declared in both NuGet packages as
 
 The software is provided as is, without warranty — see the experimental-project
 warning at the top.
+
+
 
 
 

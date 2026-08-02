@@ -1,6 +1,6 @@
 {
   "profiles": {
-    "epic": {
+    "hello": {
       "commandName": "Project"
     }
   }

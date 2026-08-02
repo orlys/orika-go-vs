@@ -19,11 +19,12 @@
 [CmdletBinding()]
 param(
     [string]$Configuration = 'Release',
-    [string]$OutputDirectory = "$PSScriptRoot/dist"
+    [string]$OutputDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist')
 )
 
 $ErrorActionPreference = 'Stop'
-$repoRoot = $PSScriptRoot
+# The scripts live in scripts/, so the repository root is one level up.
+$repoRoot = Split-Path -Parent $PSScriptRoot
 
 $null = New-Item -ItemType Directory -Path $OutputDirectory -Force
 Get-ChildItem $OutputDirectory -File | Remove-Item -Force
@@ -64,4 +65,5 @@ Get-ChildItem $OutputDirectory -File | ForEach-Object {
     $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
     "{0,-46} {1,10:N0} bytes  sha256:{2}" -f $_.Name, $_.Length, $hash.Substring(0, 16)
 }
+
 
