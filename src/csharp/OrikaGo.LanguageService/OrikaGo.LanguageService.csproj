@@ -71,6 +71,7 @@
     <Compile Include="GoStrings.cs" />
     <Compile Include="GoToolLocator.cs" />
     <Compile Include="OrikaGoPackage.cs" />
+    <Compile Include="TcpListenerTable.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

@@ -235,7 +235,7 @@ dotnet new go-lib -n MyLib -o MyLib
 
 - **`src/go/orika-goc/`** — Go 邊車（sidecar）CLI，本身就是一個 `.goproj`（自我實踐 Orika.NET.Sdk）。以 `go/parser`、`go/types` 實作 `parse` / `check` / `symbol` 三類命令，全部輸出 JSON；即使原始碼有錯誤也回傳結束代碼 0（僅基礎設施錯誤回傳非零）。
 - **`src/csharp/Orika.Go.CodeAnalysis/`** — net10.0 類別庫，透過邊車提供 `GoSyntaxTree`（語法樹）、`GoCompilation`（診斷與 `Emit`，實際執行 `go build -o`）、`GoSemanticModel`（語意查詢）。
-- **`test/csharp/Orika.Go.CodeAnalysis.Tests/`** — xUnit 測試（`dotnet test`；23 項全數通過）。
+- **`test/csharp/Orika.Go.CodeAnalysis.Tests/`** — xUnit 測試（`dotnet test`；26 項全數通過）。
 
 邊車的尋找順序：明確路徑引數 > `ORIKA_GOC` 環境變數 > 與 `Orika.Go.CodeAnalysis` 組件相鄰 > `PATH`。先建置邊車並設定環境變數即可：
 
@@ -278,12 +278,12 @@ Console.WriteLine(result.Success);
 
 架構（與 VS 內建的 CMake 偵錯同一套機制）:
 
-- **launch 端**:`GoDebugLaunchProvider` 在 F5 時啟動 `dlv dap --listen=127.0.0.1:0`,解析它回報的 port,組出 launch 設定（`mode:"exec"`、program=`GoOutputPath`、args=`StartArguments` 拆陣列、cwd=專案目錄）。**它同時匯出兩個介面**:managed 專案系統的 `LaunchProfiles` 子系統擁有 F5 的底層設施(移除該 capability 會讓 `Debug.Start` 整個消失——實測),而其管線只諮詢 `IDebugProfileLaunchTargetsProvider`(依 `[Order]` 挑選、`SupportsProfile` 把關),plain 的 `IDebugLaunchProvider` 永遠不會被問——所以 provider 兩者都實作,前者才是實際被走到的路徑。該介面沒有可用的 NuGet 套件,從 VS 安裝目錄直接參考 `Microsoft.VisualStudio.ProjectSystem.Managed.VS.dll`(`Private=false`)。
+- **launch 端**:`GoDebugLaunchProvider` 在 F5 時啟動 `dlv dap --listen=127.0.0.1:0`,查出它實際綁定的 port,組出 launch 設定（`mode:"exec"`、program=`GoOutputPath`、args=`StartArguments` 拆陣列、cwd=專案目錄）。**它同時匯出兩個介面**:managed 專案系統的 `LaunchProfiles` 子系統擁有 F5 的底層設施(移除該 capability 會讓 `Debug.Start` 整個消失——實測),而其管線只諮詢 `IDebugProfileLaunchTargetsProvider`(依 `[Order]` 挑選、`SupportsProfile` 把關),plain 的 `IDebugLaunchProvider` 永遠不會被問——所以 provider 兩者都實作,前者才是實際被走到的路徑。該介面沒有可用的 NuGet 套件,從 VS 安裝目錄直接參考 `Microsoft.VisualStudio.ProjectSystem.Managed.VS.dll`(`Private=false`)。
 - **engine 端**:`goproj.pkgdef` 於 `AD7Metrics\Engine` 註冊 Go engine,`CLSID` 指向 VS **Debug Adapter Host** 的固定實作;launch 設定中的 `$debugServer` 讓 host 直接連 dlv 的 TCP port——**不設 `"Adapter"`**,因為 `dlv dap` 只支援 TCP、不支援 stdio,由 host spawn 會在握手時卡死。
 - **除錯資訊**:Debug 組態本來就以 `-gcflags "all=-N -l"` 編譯（見「支援的屬性」),符號與區域變數完整,SDK 端無須任何改動。
 - **dlv 探測**:與 gopls 同一套 `GoToolLocator`（PATH → GOBIN/GOPATH\bin 含 `go env -w` 持久值 → `%USERPROFILE%\go\bin`);找不到時錯誤訊息給出 `go install github.com/go-delve/delve/cmd/dlv@latest`。
 - **生命週期**:dlv dap 是單一會話伺服器,session 結束自動退出;連線失敗殘留的伺服器會在下一次 F5 前被回收。
-- **主控台**:dlv 以**可見主控台**啟動（debuggee 繼承它,`fmt.Println`／`fmt.Scan` 都在那個視窗）,因此 port 由 launch provider 預先挑選（bind :0 再釋放）,並以 OS listener 表輪詢等待 dlv 就緒——不能用 TCP 試連,dlv dap 只接受單一 client,試連會吃掉 session。session 結束時主控台隨 dlv 關閉。
+- **主控台**:dlv 以**可見主控台**啟動（debuggee 繼承它,`fmt.Println`／`fmt.Scan` 都在那個視窗）,因此沒有管線可以讀出 port。做法是讓 dlv 自己綁 `:0`,再從 OS listener 表**以 dlv 自己的 process id 過濾**把 port 讀回來（`GetExtendedTcpTable`,見 `TcpListenerTable.cs`）,這同時就是就緒檢查。若改成事先挑好 port（bind :0、讀回、釋放、再交給 dlv）,中間會有一段空窗讓別的行程搶走它,而只問「有沒有人在監聽」的就緒檢查會把 session 交給那個別的服務。也不能用 TCP 試連——dlv dap 只接受單一 client,試連會吃掉 session。session 結束時主控台隨 dlv 關閉。
 
 **P0 快贏批次已實作**(詳細規劃見 `docs/debug-parity-plan.md`):
 
@@ -506,5 +506,6 @@ Go 的測試檔案**必須與被測套件放在同一目錄**——這是 Go 工
 可自由使用、修改與再散布（含商業用途），條件是**著作權聲明與授權條款需隨之保留**。該聲明已隨 VSIX 內含（`LICENSE.txt`），兩個 NuGet 套件也以 `PackageLicenseExpression` 宣告，使用者取得套件時會自動收到。
 
 本軟體按現狀提供，不附任何擔保——另請參閱開頭的實驗性專案警告。
+
 
 

@@ -4,11 +4,13 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using EnvDTE;
 using Microsoft.Build.Construction;
 using Microsoft.Build.Evaluation;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
+using Microsoft.VisualStudio.Threading;
 using DiagProcess = System.Diagnostics.Process;
 using Project = EnvDTE.Project;
 using Task = System.Threading.Tasks.Task;
@@ -179,8 +181,17 @@ namespace OrikaGo.LanguageService
         /// worst possible outcome for a one-click tool.
         /// </summary>
         private void RunGoCommand(string arguments, string runningText, string successText, Func<string, string> failureText)
+            => _ = JoinableTaskFactory.RunAsync(() => RunGoCommandAsync(arguments, runningText, successText, failureText));
+
+        /// <summary>
+        /// The go command runs on a background thread: "go mod tidy" on a
+        /// project with uncached modules takes tens of seconds, and doing that
+        /// inline on the UI thread freezes the IDE for the duration. Only the
+        /// DTE and output-pane calls need the main thread.
+        /// </summary>
+        private async Task RunGoCommandAsync(string arguments, string runningText, string successText, Func<string, string> failureText)
         {
-            ThreadHelper.ThrowIfNotOnUIThread();
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
 
             if (!(GetService(typeof(SDTE)) is DTE dte))
             {
@@ -208,37 +219,51 @@ namespace OrikaGo.LanguageService
                     CreateNoWindow = true,
                 };
 
+                string output, error;
+                int exitCode;
+                await TaskScheduler.Default;
                 using (var process = DiagProcess.Start(startInfo))
                 {
-                    // The go tools report progress and diagnostics on stderr;
-                    // read both so a full pipe can never block the process.
-                    string output = process.StandardOutput.ReadToEnd();
-                    string error = process.StandardError.ReadToEnd();
+                    // Both pipes must be drained CONCURRENTLY. The go tools put
+                    // their progress on stderr ("go: downloading ..." from go mod
+                    // tidy is the common case), and reading stdout to the end
+                    // first means nobody drains stderr until the process exits -
+                    // so once stderr's pipe buffer fills, go blocks writing it
+                    // and this thread blocks reading stdout: a deadlock neither
+                    // side can break.
+                    Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+                    Task<string> errorTask = process.StandardError.ReadToEndAsync();
+                    output = await outputTask.ConfigureAwait(false);
+                    error = await errorTask.ConfigureAwait(false);
                     process.WaitForExit();
+                    exitCode = process.ExitCode;
+                }
 
-                    if (output.Length > 0) { WriteToOutputPane(output); }
-                    if (error.Length > 0) { WriteToOutputPane(error); }
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (output.Length > 0) { WriteToOutputPane(output); }
+                if (error.Length > 0) { WriteToOutputPane(error); }
 
-                    if (process.ExitCode == 0)
-                    {
-                        dte.StatusBar.Text = successText;
-                        WriteToOutputPane(successText + Environment.NewLine);
-                    }
-                    else
-                    {
-                        dte.StatusBar.Text = string.Empty;
-                        string message = string.IsNullOrWhiteSpace(error) ? output : error;
-                        ShowError(failureText(message.Trim()));
-                    }
+                if (exitCode == 0)
+                {
+                    dte.StatusBar.Text = successText;
+                    WriteToOutputPane(successText + Environment.NewLine);
+                }
+                else
+                {
+                    dte.StatusBar.Text = string.Empty;
+                    string message = string.IsNullOrWhiteSpace(error) ? output : error;
+                    ShowError(failureText(message.Trim()));
                 }
             }
             catch (System.ComponentModel.Win32Exception)
             {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
                 dte.StatusBar.Text = string.Empty;
                 ShowError(GoStrings.GoCommandMissing);
             }
             catch (Exception ex)
             {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
                 dte.StatusBar.Text = string.Empty;
                 ShowError(failureText(ex.Message));
             }

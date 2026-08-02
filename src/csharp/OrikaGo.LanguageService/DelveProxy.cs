@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -63,8 +64,11 @@ namespace OrikaGo.LanguageService
                         NetworkStream delveStream = delve.GetStream();
 
                         // seq -> memoryReference, so a rewritten response can
-                        // echo the address the request asked for.
-                        var pendingReads = new Dictionary<int, string>();
+                        // echo the address the request asked for. Concurrent:
+                        // the two pumps run at the same time, one writing it and
+                        // one reading/removing, and a plain Dictionary corrupts
+                        // (or throws) under that.
+                        var pendingReads = new ConcurrentDictionary<int, string>();
 
                         Task up = PumpAsync(hostStream, delveStream, msg =>
                         {
@@ -114,13 +118,18 @@ namespace OrikaGo.LanguageService
                 while (true)
                 {
                     // Headers are ASCII; the body is UTF-8 and counted in bytes.
-                    string head = Encoding.ASCII.GetString(pending.ToArray(), 0, Math.Min(pending.Count, 256));
-                    int headerEnd = head.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+                    // The scan covers everything buffered rather than a fixed
+                    // prefix: DAP allows headers beyond Content-Length, and a
+                    // cap smaller than the real header block would never find
+                    // the terminator, leaving the pump waiting forever on a
+                    // frame it had already received in full.
+                    int headerEnd = IndexOfHeaderEnd(pending);
                     if (headerEnd < 0)
                     {
                         break;
                     }
-                    Match lengthMatch = Regex.Match(head.Substring(0, headerEnd),
+                    string head = Encoding.ASCII.GetString(pending.GetRange(0, headerEnd).ToArray());
+                    Match lengthMatch = Regex.Match(head,
                         @"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
                     if (!lengthMatch.Success)
                     {
@@ -149,7 +158,23 @@ namespace OrikaGo.LanguageService
             }
         }
 
-        private static void RecordReadMemoryRequest(string msg, Dictionary<int, string> pendingReads)
+        /// <summary>
+        /// Byte offset of the CRLFCRLF that ends the header block, or -1.
+        /// </summary>
+        private static int IndexOfHeaderEnd(List<byte> pending)
+        {
+            for (int i = 0; i + 3 < pending.Count; i++)
+            {
+                if (pending[i] == (byte)'\r' && pending[i + 1] == (byte)'\n' &&
+                    pending[i + 2] == (byte)'\r' && pending[i + 3] == (byte)'\n')
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        private static void RecordReadMemoryRequest(string msg, ConcurrentDictionary<int, string> pendingReads)
         {
             if (msg.IndexOf("\"readMemory\"", StringComparison.Ordinal) < 0 ||
                 msg.IndexOf("\"request\"", StringComparison.Ordinal) < 0)
@@ -164,7 +189,7 @@ namespace OrikaGo.LanguageService
             }
         }
 
-        private static string RewriteReadMemoryFailure(string msg, Dictionary<int, string> pendingReads)
+        private static string RewriteReadMemoryFailure(string msg, ConcurrentDictionary<int, string> pendingReads)
         {
             if (msg.IndexOf("unknown memoryReference", StringComparison.Ordinal) < 0 ||
                 !UnknownMemoryReference.IsMatch(msg))
@@ -181,11 +206,14 @@ namespace OrikaGo.LanguageService
 
             int requestSeqValue = int.Parse(requestSeq.Groups[1].Value, CultureInfo.InvariantCulture);
             string address;
-            if (!pendingReads.TryGetValue(requestSeqValue, out address))
+            if (!pendingReads.TryRemove(requestSeqValue, out address) || !IsAddressLiteral(address))
             {
+                // The address is echoed into hand-built JSON below, so anything
+                // that is not plainly an address is replaced rather than escaped
+                // - a reference containing a quote or a backslash would produce
+                // a malformed response and drop the session.
                 address = "0x0";
             }
-            pendingReads.Remove(requestSeqValue);
 
             // Same shape delve returns for a zero-length read it does accept:
             // success, the requested address, no data.
@@ -195,6 +223,28 @@ namespace OrikaGo.LanguageService
                    "\"command\":\"readMemory\"," +
                    "\"body\":{\"address\":\"" + address + "\",\"unreadableBytes\":0}," +
                    "\"seq\":" + (seq.Success ? seq.Groups[1].Value : "0") + "}";
+        }
+
+        /// <summary>
+        /// True for the hex addresses delve and the host actually exchange
+        /// ("0x4a1c20"); false for anything needing JSON escaping.
+        /// </summary>
+        private static bool IsAddressLiteral(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length > 32)
+            {
+                return false;
+            }
+            foreach (char c in value)
+            {
+                bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                          (c >= 'A' && c <= 'F') || c == 'x' || c == 'X';
+                if (!ok)
+                {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 }

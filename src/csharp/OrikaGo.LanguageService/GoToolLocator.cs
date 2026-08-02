@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace OrikaGo.LanguageService
 {
@@ -114,12 +115,21 @@ namespace OrikaGo.LanguageService
                 };
                 using (var process = Process.Start(startInfo))
                 {
-                    string output = process.StandardOutput.ReadToEnd();
+                    // Read both pipes without blocking on either: stderr is
+                    // redirected, so leaving it undrained lets "go" block writing
+                    // it (GOTOOLCHAIN=...+auto prints "go: downloading go1.x"
+                    // there) while this thread sits in ReadToEnd on stdout -
+                    // which would also make the 5s timeout below unreachable,
+                    // since WaitForExit is never entered.
+                    Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+                    Task<string> errorTask = process.StandardError.ReadToEndAsync();
                     if (!process.WaitForExit(5000))
                     {
                         try { process.Kill(); } catch (Exception) { }
                         return Array.Empty<string>();
                     }
+                    string output = outputTask.GetAwaiter().GetResult();
+                    errorTask.GetAwaiter().GetResult();
                     if (process.ExitCode != 0)
                     {
                         return Array.Empty<string>();

@@ -235,7 +235,7 @@ Notes:
 
 - **`src/go/orika-goc/`** — the Go sidecar CLI, itself a `.goproj` (dogfooding Orika.NET.Sdk). It implements three command families — `parse` / `check` / `symbol` — on top of `go/parser` and `go/types`, all emitting JSON; it returns exit code 0 even when the source has errors (only infrastructure errors return non-zero).
 - **`src/csharp/Orika.Go.CodeAnalysis/`** — a net10.0 class library that uses the sidecar to provide `GoSyntaxTree` (syntax trees), `GoCompilation` (diagnostics and `Emit`, which actually runs `go build -o`), and `GoSemanticModel` (semantic queries).
-- **`test/csharp/Orika.Go.CodeAnalysis.Tests/`** — xUnit tests (`dotnet test`; all 23 pass).
+- **`test/csharp/Orika.Go.CodeAnalysis.Tests/`** — xUnit tests (`dotnet test`; all 26 pass).
 
 The sidecar lookup order is: explicit path argument > the `ORIKA_GOC` environment variable > next to the `Orika.Go.CodeAnalysis` assembly > `PATH`. Building the sidecar and setting the environment variable is enough:
 
@@ -278,12 +278,12 @@ Pressing **F5** on a `.goproj` project debugs it with [delve](https://github.com
 
 Architecture (the same mechanism VS's built-in CMake debugging uses):
 
-- **Launch side**: on F5, `GoDebugLaunchProvider` starts `dlv dap --listen=127.0.0.1:0`, parses the port it reports, and assembles the launch configuration (`mode:"exec"`, program=`GoOutputPath`, args=`StartArguments` split into an array, cwd=the project directory). **It exports two interfaces at once**: the managed project system's `LaunchProfiles` subsystem owns the underlying machinery for F5 (removing that capability makes `Debug.Start` disappear entirely — measured), and its pipeline only consults `IDebugProfileLaunchTargetsProvider` (selected by `[Order]`, gated by `SupportsProfile`); a plain `IDebugLaunchProvider` is never asked — so the provider implements both, and the former is the path actually taken. There is no usable NuGet package for that interface, so `Microsoft.VisualStudio.ProjectSystem.Managed.VS.dll` is referenced directly from the VS install directory (`Private=false`).
+- **Launch side**: on F5, `GoDebugLaunchProvider` starts `dlv dap --listen=127.0.0.1:0`, discovers the port it bound, and assembles the launch configuration (`mode:"exec"`, program=`GoOutputPath`, args=`StartArguments` split into an array, cwd=the project directory). **It exports two interfaces at once**: the managed project system's `LaunchProfiles` subsystem owns the underlying machinery for F5 (removing that capability makes `Debug.Start` disappear entirely — measured), and its pipeline only consults `IDebugProfileLaunchTargetsProvider` (selected by `[Order]`, gated by `SupportsProfile`); a plain `IDebugLaunchProvider` is never asked — so the provider implements both, and the former is the path actually taken. There is no usable NuGet package for that interface, so `Microsoft.VisualStudio.ProjectSystem.Managed.VS.dll` is referenced directly from the VS install directory (`Private=false`).
 - **Engine side**: `goproj.pkgdef` registers the Go engine under `AD7Metrics\Engine`, with `CLSID` pointing at VS's **Debug Adapter Host** fixed implementation; `$debugServer` in the launch configuration makes the host connect directly to dlv's TCP port — **`"Adapter"` is deliberately not set**, because `dlv dap` supports only TCP, not stdio, and having the host spawn it would deadlock during the handshake.
 - **Debug information**: the Debug configuration is already compiled with `-gcflags "all=-N -l"` (see "Supported Properties"), so symbols and locals are complete and no SDK-side change is needed.
 - **dlv probing**: the same `GoToolLocator` used for gopls (PATH → GOBIN/GOPATH\bin including persisted `go env -w` values → `%USERPROFILE%\go\bin`); when it is not found, the error message gives `go install github.com/go-delve/delve/cmd/dlv@latest`.
 - **Lifecycle**: dlv dap is a single-session server and exits automatically when the session ends; a server left behind by a failed connection is reclaimed before the next F5.
-- **Console**: dlv is started with a **visible console** (the debuggee inherits it, so `fmt.Println` / `fmt.Scan` happen in that window), so the port is pre-selected by the launch provider (bind :0, then release), and readiness is awaited by polling the OS listener table — a TCP test connection cannot be used, because `dlv dap` accepts only a single client and a probe connection would consume the session. The console closes together with dlv when the session ends.
+- **Console**: dlv is started with a **visible console** (the debuggee inherits it, so `fmt.Println` / `fmt.Scan` happen in that window), so there is no pipe to read the port from. dlv is therefore told to bind `:0` and the port is read back from the OS listener table, **filtered to dlv's own process id** (`GetExtendedTcpTable`, see `TcpListenerTable.cs`) — which doubles as the readiness check. Preselecting a port here instead (bind :0, read it, release, pass it to dlv) would leave a window in which another process could take it, and a readiness check that only asks "is anything listening?" would then hand the session to that other service. A TCP test connection is not an option either, because `dlv dap` accepts a single client and a probe would consume the session. The console closes together with dlv when the session ends.
 
 **The P0 quick-win batch is implemented** (detailed plan in `docs/debug-parity-plan.md`):
 
@@ -513,5 +513,6 @@ the VSIX as `LICENSE.txt` and is declared in both NuGet packages as
 
 The software is provided as is, without warranty — see the experimental-project
 warning at the top.
+
 
 

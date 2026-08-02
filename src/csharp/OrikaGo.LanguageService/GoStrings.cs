@@ -72,8 +72,8 @@ namespace OrikaGo.LanguageService
         public static string DlvExitedEarly(int exitCode) => IsChinese
             ? "dlv dap 啟動後立即結束（結束代碼 " + exitCode + "）。"
             : "dlv dap exited immediately after starting (exit code " + exitCode + ").";
-        public static string DlvNotListening(int port) => IsChinese
-            ? "dlv dap 未在時限內開始監聽 port " + port + "。"
-            : "dlv dap did not start listening on port " + port + " in time.";
+        public static string DlvNotListening => IsChinese
+            ? "dlv dap 未在時限內開始監聽任何 loopback port。"
+            : "dlv dap did not start listening on a loopback port in time.";
     }
 }

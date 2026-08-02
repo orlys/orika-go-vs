@@ -275,3 +275,35 @@ CPS 的命令群組處理器只參與**專案 context menu** 的命令路由,主
 DebugAdapterHost.Logging /On:<檔案路徑>     (VS 命令視窗或 DTE.ExecuteCommand)
 ```
 它會逐筆記錄 DAP 往返,能直接看出「VS 送了什麼」「delve 回了什麼」。注意這個檔案是**累加**的,分析時要先用 `DebugAdapterHost version:` 這行切出最新 session,否則會把舊 session 的警告當成新問題(這個坑踩過)。
+
+### 20. 循序讀 stdout/stderr = 死鎖(而且註解會騙人)
+
+```csharp
+string output = process.StandardOutput.ReadToEnd();   // 卡在這裡
+string error  = process.StandardError.ReadToEnd();    // 永遠到不了
+```
+
+兩條管線都重導時**必須同時排空**。子行程往 stderr 寫滿 pipe buffer(Windows 預設 4KB)後就阻塞,而讀取端還在等 stdout 關閉——雙方互等,誰也醒不過來。
+
+Go 工具鏈特別容易踩:進度訊息全走 stderr。`go mod tidy` 下載模組時印的 `go: downloading ...`、`GOTOOLCHAIN=...+auto` 觸發的 `go: downloading go1.x`,都是 stdout 幾乎沒有東西、stderr 一直噴的形狀。
+
+實測(`cmd /c for /L ... 1>&2`,約 100KB stderr):循序寫法 6 秒不返回、子行程要強制終止;`ReadToEndAsync()` 兩條同時等,335ms 完成。
+
+兩個附帶教訓:
+
+- **`WaitForExit(timeout)` 排在 `ReadToEnd()` 之後等於沒有 timeout**——執行不到那一行。`GoToolLocator.RunGoEnv` 原本就是這個形狀,5 秒上限形同虛設。
+- **註解寫了不代表程式碼做了。** 原本的 `OrikaGoPackage.RunGoCommand` 上面明明白白寫著「read both so a full pipe can never block the process」,底下卻是循序的兩行。review 時要看程式碼,別看註解。
+
+順帶:這段原本整個跑在 UI 執行緒上,`go mod tidy` 幾十秒就是 IDE 凍幾十秒。現在只有 DTE 與輸出窗格的呼叫留在主執行緒,行程等待走 `await TaskScheduler.Default`。
+
+### 21. 「有人在監聽這個 port」不等於「是我啟動的那個行程在監聽」
+
+原本的做法:自己 bind `:0` 拿一個空 port、關掉、把 port 號傳給 `dlv --listen=127.0.0.1:<port>`,然後輪詢 `IPGlobalProperties.GetActiveTcpListeners()` 等它出現。
+
+漏洞在於釋放與 dlv 綁上之間的空窗。若這時別的行程搶走該 port,輪詢會看到「有人在監聽」→ 判定就緒 → proxy 把整個偵錯 session 轉給那個不相干的服務。程式碼裡原本的註解說「dlv 會 fail fast,輪詢會報出來」——**不成立**,因為迴圈先看到 listening 就 break 了,dlv 那時還沒退出。
+
+`GetActiveTcpListeners()` 不給 owner PID,是這個 API 的天花板。正解是 `GetExtendedTcpTable`(`iphlpapi.dll`,`TCP_TABLE_OWNER_PID_LISTENER`),它每列帶 `OwningPid`:讓 dlv 自己綁 `:0`,再用它的 PID 反查拿到 port。空窗直接消失,而不是被縮小。見 `TcpListenerTable.cs`。
+
+P/Invoke 兩個容易靜默寫錯的地方,務必實測(開一個 listener 反查自己的 PID 就能驗):
+- `MIB_TCPROW_OWNER_PID.LocalPort` 是 **network byte order 存在低兩個 byte**,要 `(b1 << 8) | b2`,不是直接讀 `uint`
+- `LocalAddr` 也是 network byte order,比對 loopback 要 `IPAddress.HostToNetworkOrder(0x7F000001)`

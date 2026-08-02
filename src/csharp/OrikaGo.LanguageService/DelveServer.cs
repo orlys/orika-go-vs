@@ -51,16 +51,17 @@ namespace OrikaGo.LanguageService
                 previous.Dispose();
             }
 
-            // The port is picked HERE (bind :0, read it back, release) instead of
-            // letting dlv pick one, because dlv runs WITHOUT redirected stdio
-            // (see visibleConsole) so there is no pipe to read the port from.
-            // ponytail: tiny bind-then-reuse race window; dlv fails fast and the
-            // poll below reports it if the port gets stolen in between.
-            var probe = new TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-
+            // dlv picks the port (:0) and we read it back from the OS listener
+            // table, filtered to dlv's own PID. Preselecting a port here instead
+            // (bind :0, read it back, release, pass it to dlv) leaves a window in
+            // which another process can take it: the readiness poll below would
+            // then see SOMEONE listening, report success, and the proxy would
+            // relay the debug session to that other service. Asking who owns the
+            // socket removes the window rather than narrowing it.
+            //
+            // Reading the port from dlv's stdout is not an option: dlv runs
+            // WITHOUT redirected stdio (see visibleConsole) so the debuggee can
+            // inherit the console.
             var startInfo = new ProcessStartInfo
             {
                 FileName = dlvPath,
@@ -68,7 +69,7 @@ namespace OrikaGo.LanguageService
                 // releases and refuses binaries built by an older toolchain
                 // outright (a modal error kills the session). A no-op when
                 // versions match.
-                Arguments = "dap --check-go-version=false --listen=127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture),
+                Arguments = "dap --check-go-version=false --listen=127.0.0.1:0",
                 WorkingDirectory = workingDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 UseShellExecute = false,
                 CreateNoWindow = !visibleConsole,
@@ -83,28 +84,21 @@ namespace OrikaGo.LanguageService
                 // client, and a probe connect would consume the session - so the
                 // OS listener table is consulted instead.
                 var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+                int port;
                 while (true)
                 {
                     if (process.HasExited)
                     {
                         throw new InvalidOperationException(GoStrings.DlvExitedEarly(process.ExitCode));
                     }
-                    bool listening = false;
-                    foreach (IPEndPoint listener in IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners())
-                    {
-                        if (listener.Port == port)
-                        {
-                            listening = true;
-                            break;
-                        }
-                    }
-                    if (listening)
+                    port = TcpListenerTable.FindLoopbackListenerPort(process.Id);
+                    if (port != 0)
                     {
                         break;
                     }
                     if (DateTime.UtcNow > deadline)
                     {
-                        throw new InvalidOperationException(GoStrings.DlvNotListening(port));
+                        throw new InvalidOperationException(GoStrings.DlvNotListening);
                     }
                     // ConfigureAwait(false): the attach path blocks on this task
                     // from the UI thread (GetResult) - a captured UI context
