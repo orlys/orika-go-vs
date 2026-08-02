@@ -15,3 +15,6 @@ vendor/
 
 # Serena MCP tool state
 .serena/
+
+# Release artifacts (build-release.ps1)
+dist/
