@@ -9,6 +9,10 @@
 
 [English](README.md)
 
+![Visual Studio 編輯 Go 專案:.goproj 以 GoModuleReference 宣告 github.com/oklog/ulid/v2、main.go 有 Go 語法著色與中斷點且 gopls 回報無問題、相依性節點的右鍵選單只有「Add Go Module Reference...」與「Tidy Go Modules」、下方「Orika Go」輸出窗格顯示 go mod tidy 與 go generate 已執行完成。](img/1.png)
+
+畫面上的每一項都是這個專案做的:`.goproj` 像 `.csproj` 一樣宣告相依、gopls 負責著色與診斷、中斷點透過 delve 繫結、相依性節點放的是 Go 命令而非 NuGet,`go mod tidy`／`go generate` 的結果進到專屬的輸出窗格。
+
 > 開發者請先看 [`docs/pitfalls.md`](docs/pitfalls.md):VS 擴充、CPS capability 與 delve 偵錯的實際踩坑記錄(症狀／根因／解法／診斷方式),幾乎全是沒有錯誤訊息的靜默失敗。偵錯功能規劃見 [`docs/debug-parity-plan.md`](docs/debug-parity-plan.md)。
 
 本專案示範如何使用 **Orika.NET.Sdk**（一個自訂的 MSBuild 專案 SDK）以 .NET CLI 工具鏈來建置、執行、測試與發佈 **Go** 程式。

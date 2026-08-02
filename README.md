@@ -9,6 +9,10 @@
 
 [繁體中文說明](README.zh-TW.md)
 
+![Visual Studio editing a Go project: a .goproj declaring GoModuleReference for github.com/oklog/ulid/v2, main.go with Go syntax colouring, a breakpoint and gopls reporting no issues, the Dependencies context menu offering only "Add Go Module Reference..." and "Tidy Go Modules", and the "Orika Go" output pane showing completed go mod tidy and go generate runs.](img/1.png)
+
+Everything in that screenshot is this project: the `.goproj` declares its dependency the way a `.csproj` would, gopls drives colouring and diagnostics, breakpoints bind through delve, the Dependencies node carries Go commands instead of NuGet ones, and `go mod tidy` / `go generate` report into a dedicated output pane.
+
 > Developers should read [`docs/pitfalls.md`](docs/pitfalls.md) first: a record of the actual pitfalls hit with VS extensions, CPS capabilities, and delve debugging (symptom / root cause / fix / how to diagnose). Almost all of them are silent failures with no error message. The debugging feature roadmap is in [`docs/debug-parity-plan.md`](docs/debug-parity-plan.md).
 
 This project demonstrates how to use **Orika.NET.Sdk** (a custom MSBuild project SDK) to build, run, test, and publish **Go** programs with the .NET CLI toolchain.
