@@ -99,10 +99,11 @@ public static class OrikaGoToolResolver
             "找不到 orika-goc sidecar 可執行檔。已嘗試以下位置：" + Environment.NewLine +
             string.Join(Environment.NewLine, attempted.Select(a => "  - " + a)) + Environment.NewLine +
             "修復方式（擇一）：" + Environment.NewLine +
-            "  1. 在 compiler/orika-goc 目錄執行「go build -o orika-goc.exe .」（或使用 Orika.NET.Sdk 建置該 .goproj），" +
+            "  1. 在 src/go/orika-goc 目錄執行「go build -o orika-goc.exe .」（或使用 Orika.NET.Sdk 建置該 .goproj），" +
             "並將產出的可執行檔複製到 Orika.Go.CodeAnalysis.dll 所在目錄；" + Environment.NewLine +
             $"  2. 設定環境變數 {EnvVarName} 指向 orika-goc 可執行檔的完整路徑；" + Environment.NewLine +
             "  3. 將 orika-goc 所在目錄加入 PATH；" + Environment.NewLine +
             "  4. 於 API 呼叫時明確傳入工具路徑，或設定 OrikaGoToolResolver.DefaultToolPath。");
     }
 }
+

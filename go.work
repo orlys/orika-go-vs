@@ -1,6 +1,6 @@
 go 1.25.0
 
 use (
-	.
-	./compiler/orika-goc
+	./samples/hello
+	./src/go/orika-goc
 )

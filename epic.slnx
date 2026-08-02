@@ -1,8 +1,8 @@
 <Solution>
-  <Project Path="epic.goproj" Type="C#" />
-  <Project Path="compiler/orika-goc/orika-goc.goproj" Type="C#" />
-  <Project Path="compiler/Orika.Go.CodeAnalysis/Orika.Go.CodeAnalysis.csproj" />
-  <Project Path="compiler/Orika.Go.CodeAnalysis.Tests/Orika.Go.CodeAnalysis.Tests.csproj" />
+  <Project Path="samples/hello/hello.goproj" Type="C#" />
+  <Project Path="src/go/orika-goc/orika-goc.goproj" Type="C#" />
+  <Project Path="src/csharp/Orika.Go.CodeAnalysis/Orika.Go.CodeAnalysis.csproj" />
+  <Project Path="test/csharp/Orika.Go.CodeAnalysis.Tests/Orika.Go.CodeAnalysis.Tests.csproj" />
   <Project Path="templates/Orika.Go.Templates.csproj" />
   <!--
     OrikaGo.LanguageService is a classic VSSDK project (.NET Framework 4.7.2 +
@@ -10,9 +10,10 @@
     (VS 18 "MSBuild.exe"), not under "dotnet build", so it is part of the
     solution but excluded from the solution build configuration. Build it with:
       "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe"
-        vsix\OrikaGo.LanguageService\OrikaGo.LanguageService.csproj /restore /p:Configuration=Release
+        src\csharp\OrikaGo.LanguageService\OrikaGo.LanguageService.csproj /restore /p:Configuration=Release
   -->
-  <Project Path="vsix/OrikaGo.LanguageService/OrikaGo.LanguageService.csproj" Id="d1f7a2c4-9b3e-4e5a-8f21-6c0d7e5b9a31">
+  <Project Path="src/csharp/OrikaGo.LanguageService/OrikaGo.LanguageService.csproj" Id="d1f7a2c4-9b3e-4e5a-8f21-6c0d7e5b9a31">
     <Build Project="false" />
   </Project>
 </Solution>
+

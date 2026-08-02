@@ -18,11 +18,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Orika.Go.CodeAnalysis\Orika.Go.CodeAnalysis.csproj" />
+    <ProjectReference Include="..\..\..\src\csharp\Orika.Go.CodeAnalysis\Orika.Go.CodeAnalysis.csproj" />
     <!-- Build-order dependency only: the sidecar is a Go executable, not an
          assembly reference. It is copied next to the test output below so
          OrikaGoToolResolver finds it beside Orika.Go.CodeAnalysis.dll. -->
-    <ProjectReference Include="..\orika-goc\orika-goc.goproj"
+    <ProjectReference Include="..\..\..\src\go\orika-goc\orika-goc.goproj"
                       ReferenceOutputAssembly="false"
                       Private="false" />
   </ItemGroup>
@@ -31,7 +31,7 @@
        (OrikaGoToolResolver step 3). GetTargetPath on the .goproj returns the
        real Go binary (see Orika.NET.Sdk Sdk.targets). -->
   <Target Name="CopyOrikaGocSidecar" AfterTargets="Build">
-    <MSBuild Projects="..\orika-goc\orika-goc.goproj"
+    <MSBuild Projects="..\..\..\src\go\orika-goc\orika-goc.goproj"
              Targets="GetTargetPath"
              Properties="Configuration=$(Configuration)">
       <Output TaskParameter="TargetOutputs" ItemName="_OrikaGocSidecar" />
@@ -42,3 +42,4 @@
   </Target>
 
 </Project>
+

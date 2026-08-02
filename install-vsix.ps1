@@ -22,8 +22,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = $PSScriptRoot
-$project = Join-Path $repoRoot 'vsix/OrikaGo.LanguageService/OrikaGo.LanguageService.csproj'
-$vsix = Join-Path $repoRoot 'vsix/OrikaGo.LanguageService/bin/Release/OrikaGo.LanguageService.vsix'
+$project = Join-Path $repoRoot 'src/csharp/OrikaGo.LanguageService/OrikaGo.LanguageService.csproj'
+$vsix = Join-Path $repoRoot 'src/csharp/OrikaGo.LanguageService/bin/Release/OrikaGo.LanguageService.vsix'
 $extensionId = 'OrikaGo.LanguageService'
 
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -73,7 +73,7 @@ $update = Start-Process $devenv -ArgumentList '/updateconfiguration' -Wait -Pass
 if ($update.ExitCode -ne 0) { Write-Warning "devenv /updateconfiguration exited with $($update.ExitCode)." }
 
 # Prove the deployed payload is the one just built, rather than trusting exit 0.
-$builtDll = Join-Path $repoRoot 'vsix/OrikaGo.LanguageService/bin/Release/OrikaGo.LanguageService.dll'
+$builtDll = Join-Path $repoRoot 'src/csharp/OrikaGo.LanguageService/bin/Release/OrikaGo.LanguageService.dll'
 $deployed = Get-ChildItem "$env:LOCALAPPDATA/Microsoft/VisualStudio/*/Extensions" -Recurse -Filter 'OrikaGo.LanguageService.dll' -ErrorAction SilentlyContinue
 $builtHash = (Get-FileHash $builtDll).Hash
 $match = $deployed | Where-Object { (Get-FileHash $_.FullName).Hash -eq $builtHash }
@@ -84,3 +84,4 @@ if (-not $match) {
 
 Write-Host "Installed $extensionId -> $($match[0].DirectoryName)"
 Write-Host "Restart Visual Studio for the extension to load."
+

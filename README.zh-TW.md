@@ -7,6 +7,13 @@
 >
 > 如果你對這個題目本身感興趣、也不介意自己動手診斷一個行為怪異的 IDE,那就用吧。但不要把它交給一個只想把東西做完出貨的團隊。
 
+> [!NOTE]
+> **本專案全為 Vibe Coding 產物。** 這裡的每一項產出——MSBuild SDK、VSIX、Go 邊車、以及這些文件——都是由 AI 代理透過對話產生的,作者負責決定方向與驗收結果,而不是自己敲程式碼。
+>
+> 這**不**代表內容是憑空猜的:設計決策來自反編譯那些解決同類問題的內建元件,而本文件中關於行為的每項宣稱都是實際跑出來的——DAP 協定記錄、修正前後的重現腳本、真實 IDE 的截圖。走錯的路也連同正確解法一起記在 [`docs/pitfalls.md`](docs/pitfalls.md)。
+>
+> 但這確實代表:沒有任何人類逐行審查過全部程式碼。請據此判斷它的可信度。
+
 [English](README.md)
 
 ![Visual Studio 編輯 Go 專案:.goproj 以 GoModuleReference 宣告 github.com/oklog/ulid/v2、main.go 有 Go 語法著色與中斷點且 gopls 回報無問題、相依性節點的右鍵選單只有「Add Go Module Reference...」與「Tidy Go Modules」、下方「Orika Go」輸出窗格顯示 go mod tidy 與 go generate 已執行完成。](img/1.png)
@@ -224,18 +231,18 @@ dotnet new go-lib -n MyLib -o MyLib
 
 ## 編譯器平台 API（Orika.Go.CodeAnalysis）
 
-`compiler/` 提供仿 Roslyn 形狀的 Go 編譯器平台：
+`src/csharp/Orika.Go.CodeAnalysis` + `src/go/orika-goc` 提供仿 Roslyn 形狀的 Go 編譯器平台：
 
-- **`compiler/orika-goc/`** — Go 邊車（sidecar）CLI，本身就是一個 `.goproj`（自我實踐 Orika.NET.Sdk）。以 `go/parser`、`go/types` 實作 `parse` / `check` / `symbol` 三類命令，全部輸出 JSON；即使原始碼有錯誤也回傳結束代碼 0（僅基礎設施錯誤回傳非零）。
-- **`compiler/Orika.Go.CodeAnalysis/`** — net10.0 類別庫，透過邊車提供 `GoSyntaxTree`（語法樹）、`GoCompilation`（診斷與 `Emit`，實際執行 `go build -o`）、`GoSemanticModel`（語意查詢）。
-- **`compiler/Orika.Go.CodeAnalysis.Tests/`** — xUnit 測試（`dotnet test`；23 項全數通過）。
+- **`src/go/orika-goc/`** — Go 邊車（sidecar）CLI，本身就是一個 `.goproj`（自我實踐 Orika.NET.Sdk）。以 `go/parser`、`go/types` 實作 `parse` / `check` / `symbol` 三類命令，全部輸出 JSON；即使原始碼有錯誤也回傳結束代碼 0（僅基礎設施錯誤回傳非零）。
+- **`src/csharp/Orika.Go.CodeAnalysis/`** — net10.0 類別庫，透過邊車提供 `GoSyntaxTree`（語法樹）、`GoCompilation`（診斷與 `Emit`，實際執行 `go build -o`）、`GoSemanticModel`（語意查詢）。
+- **`test/csharp/Orika.Go.CodeAnalysis.Tests/`** — xUnit 測試（`dotnet test`；23 項全數通過）。
 
 邊車的尋找順序：明確路徑引數 > `ORIKA_GOC` 環境變數 > 與 `Orika.Go.CodeAnalysis` 組件相鄰 > `PATH`。先建置邊車並設定環境變數即可：
 
 ```powershell
-dotnet build compiler/orika-goc/orika-goc.goproj
-$env:ORIKA_GOC = "$PWD\compiler\orika-goc\bin\Debug\orika-goc.exe"
-dotnet test compiler/Orika.Go.CodeAnalysis.Tests
+dotnet build src/go/orika-goc/orika-goc.goproj
+$env:ORIKA_GOC = "$PWD\src\go\orika-goc\bin\Debug\orika-goc.exe"
+dotnet test test/csharp/Orika.Go.CodeAnalysis.Tests
 ```
 
 短範例：
@@ -305,7 +312,7 @@ Console.WriteLine(result.Success);
 
 VSIX 內的 `GoLanguageClient`（`ILanguageClient`，負責啟動 `gopls serve`）先前掛在 `[ContentType("go")]` 上，但**沒有任何組件匯出名為 `go` 的內容類型**，因此 Visual Studio 永遠不會呼叫 `ActivateAsync`，gopls 也從未被啟動。整個編輯／導覽／重構／診斷功能都卡在這一個缺口上。
 
-`vsix/OrikaGo.LanguageService/GoContentTypeDefinitions.cs` 現在真正匯出內容類型與副檔名對應：
+`src/csharp/OrikaGo.LanguageService/GoContentTypeDefinitions.cs` 現在真正匯出內容類型與副檔名對應：
 
 ```csharp
 public const string ContentTypeName = "OrikaGo";
@@ -395,21 +402,30 @@ public IEnumerable<string> FilesToWatch => new[]
 
 ```
 epic/
-├── epic.slnx                    # 方案檔（XML 新格式；Type="C#" 讓 VS 以 SDK 專案系統載入 .goproj）
-├── epic.goproj                  # 使用 Orika.NET.Sdk 的專案檔
-├── go.mod                      # Go 模組定義（go 指示詞由 SDK 依 LangVersion 管理）
-├── main.go                     # 進入點
-├── greeting.go                 # Greet 輔助函式
-├── greeting_test.go            # go test 會執行的測試
-├── Properties/launchSettings.json
-├── sdk/Orika.NET.Sdk/          # SDK 本體（Sdk.props / Sdk.targets / 打包專案）
-├── templates/                  # Orika.Go.Templates 範本套件（go-console / go-lib）
-├── compiler/                   # 編譯器平台：orika-goc 邊車、Orika.Go.CodeAnalysis(+.Tests)
-├── vsix/OrikaGo.LanguageService/ # VS 語言服務 VSIX（gopls LSP + goproj.pkgdef：獨立專案類型 GUID {8A0FBF95-...}，仿 msbuildproj 模式指向 CPS 套件）
-├── packages/                   # 本機 NuGet 摘要來源（build-sdk.ps1 的輸出）
+├── epic.slnx                        # 方案檔（新的 XML 格式；Type="C#" 讓 VS 以 SDK 專案系統載入 .goproj）
+├── go.work                          # Go 工作區，列出範例與邊車模組
+├── LICENSE                          # MIT
+├── src/
+│   ├── csharp/
+│   │   ├── Orika.Go.CodeAnalysis/   # Roslyn 風格的編譯器平台 API
+│   │   └── OrikaGo.LanguageService/ # VS 擴充（gopls LSP 用戶端、delve 偵錯整合、命令、圖示）
+│   └── go/
+│       └── orika-goc/               # Go 邊車：以 go/packages 提供 parse／check／symbol
+├── test/
+│   └── csharp/
+│       └── Orika.Go.CodeAnalysis.Tests/
+├── sdk/Orika.NET.Sdk/               # SDK 本體（Sdk.props／Sdk.targets／封裝專案）
+├── templates/                       # Orika.Go.Templates 範本套件（go-console／go-lib）
+├── samples/hello/                   # 使用本 SDK 的 Go 範例專案，同時作為冒煙測試
+├── docs/                            # pitfalls.md、debug-parity-plan.md、releasing.md
+├── img/                             # README 使用的截圖
 ├── nuget.config
-└── build-sdk.ps1
+├── build-sdk.ps1                    # 將 SDK 打包到本機 feed
+├── build-release.ps1                # 產出所有可發布產物到 ./dist
+└── install-vsix.ps1                 # 重建並重新安裝擴充
 ```
+
+Go 的測試檔案**必須與被測套件放在同一目錄**——這是 Go 工具鏈的規定而非偏好——因此 `test/` 底下只有 C# 測試專案，Go 測試仍留在 `samples/hello/greeting_test.go` 以及邊車原始碼旁。
 
 ## 圖示
 
@@ -420,7 +436,7 @@ epic/
 
 ## 編譯器平台的正確性修正
 
-外部審查（codex）在 `compiler/` 找出三個真實缺陷，皆已修正並補上測試（測試總數 11 → 23）：
+外部審查（codex）在 `src/csharp/Orika.Go.CodeAnalysis` + `src/go/orika-goc` 找出三個真實缺陷，皆已修正並補上測試（測試總數 11 → 23）：
 
 | 缺陷 | 症狀 | 修正 |
 |------|------|------|
@@ -428,9 +444,9 @@ epic/
 | 檢查與建置看的檔案集合可能不同 | `Emit` 接受 `Tags`／`OS`／`Arch`，但 `GetDiagnostics()` 沒有對應選項，邊車固定以 `build.Default` 檢查。於是 `//go:build linux` 的程式碼在 Windows 上完全檢查不到，卻會被 `Emit(OS = "linux")` 編譯。 | 邊車的 `check`／`symbol` 新增 `-tags`／`-goos`／`-goarch`（透過 `packages.Config.Env` 設定 `GOOS`／`GOARCH`／`GOFLAGS=-tags=…`）。C# 端新增 `GoAnalysisOptions`，並讓 `GoEmitOptions` 由它衍生，因此**同一個選項物件**可同時交給 `GetDiagnostics(options)`、`GetSemanticModel(options)` 與 `Emit(path, options)`。無參數多載維持原樣。 |
 | 欄號單位與編輯器不一致 | Go 的 `token.Position.Column` 是**行內位元組數**，而 .NET／Visual Studio／LSP 使用 **UTF-16 字碼單位**。含非 ASCII 字元的行（例如 `fmt.Println("你好世界", value)`）中，`GetSymbolAt` 以 VS 回報的欄號查詢會得到 `null`。 | 在邊車的協定邊界做轉換：輸出位置時位元組欄 → UTF-16 欄，`symbol` 接受位置時 UTF-16 欄 → 位元組欄（實際讀取該行的原始位元組換算）。`parse`、`check`、`symbol` 三個命令一致。`offset` 仍維持為位元組位移。C# 端的 XML 文件已明確標示單位。 |
 
-驗證方式（`compiler/Orika.Go.CodeAnalysis.Tests/`）：`GoModuleResolutionTests` 以真實的 `go mod tidy`／`go build` 當作基準，要求 `GetDiagnostics()` 與 `go build` 的判斷一致；`GoBuildContextTests` 檢查 `//go:build linux` 與自訂標籤的檔案「預設看不到、指定建置內容才看得到」；`GoColumnUnitTests` 以含 `你好世界`／`名前` 的原始碼確認欄號為 UTF-16 單位（並確認舊的位元組欄號不再解析成功）。上述 11 項新測試在修正前的邊車上全數失敗。
+驗證方式（`test/csharp/Orika.Go.CodeAnalysis.Tests/`）：`GoModuleResolutionTests` 以真實的 `go mod tidy`／`go build` 當作基準，要求 `GetDiagnostics()` 與 `go build` 的判斷一致；`GoBuildContextTests` 檢查 `//go:build linux` 與自訂標籤的檔案「預設看不到、指定建置內容才看得到」；`GoColumnUnitTests` 以含 `你好世界`／`名前` 的原始碼確認欄號為 UTF-16 單位（並確認舊的位元組欄號不再解析成功）。上述 11 項新測試在修正前的邊車上全數失敗。
 
-> 邊車現在依賴 `golang.org/x/tools`（見 `compiler/orika-goc/go.mod`／`go.sum`）。由於 `check` 會透過 `go list` 從原始碼型別檢查相依套件，單次檢查約需數秒。
+> 邊車現在依賴 `golang.org/x/tools`（見 `src/go/orika-goc/go.mod`／`go.sum`）。由於 `check` 會透過 `go list` 從原始碼型別檢查相依套件，單次檢查約需數秒。
 
 ## MSBuild SDK 的正確性修正
 
@@ -459,7 +475,7 @@ epic/
 | RID 驗證擋死 explicit override | `_GoValidatePublishRid` 只認內建六個 RID,`-r freebsd-x64 -p:GoOS=freebsd -p:GoArch=amd64` 這種明確指定也被拒。 | 只在**有效值**（RID 對應與 explicit `GoOS`/`GoArch` 合併後）仍為空時才報錯,實測 freebsd-x64 publish 成功。 |
 | 診斷 parser 不認 cgo 副檔名 | `GoExec` 與 `GoCompilation` 的正規表示式只認 `.go/.s/.S/.c/.h`,`helper.cpp:3:5: error:` 這類 C/C++ 編譯錯誤無法從錯誤清單導覽。 | 兩處副檔名集合對齊 `@(GoNativeCompile)` 的完整清單。 |
 
-**編譯器平台（`compiler/`）**：
+**編譯器平台（`src/csharp/Orika.Go.CodeAnalysis` + `src/go/orika-goc`）**：
 
 | 缺陷 | 症狀 | 修正 |
 |------|------|------|
@@ -469,7 +485,7 @@ epic/
 | 壞 `go.mod` 變 infra error | `go.mod` 打錯字（每次手邊編輯都會經過的狀態）使 `packages.Load` 硬錯,邊車 exit 1,C# 端 `GetDiagnostics()` 直接擲出例外——違反「壞原始碼是資料,exit 0」的契約。 | 工具鏈**有跑起來**的載入失敗轉為指向 `go.mod` 對應行的診斷（訊息內含 `go.mod:5:` 時取其行號）,exit 0;僅「go 指令不存在／目錄不存在」維持 infra error。 |
 | BOM 檔第一行欄號右偏 1 | UTF-8 BOM 的 3 位元組計入 go/token 位元組欄,但 VS 緩衝區會剝掉 BOM;`utf16Len` 把 U+FEFF 算 1 單位,第一行所有欄號偏 1（`toByteCol` 為鏡像錯誤）。 | 行首 U+FEFF 計為 0 個 UTF-16 單位;`toByteCol` 先跳過 BOM 的 3 位元組再計數（editor 欄 1 ↔ 位元組欄 4）。實測 BOM 檔 `parse`:File 欄 1、`main` 識別項欄 9,與 VS 緩衝區一致。 |
 
-**VSIX（`vsix/OrikaGo.LanguageService/`）**：
+**VSIX（`src/csharp/OrikaGo.LanguageService/`）**：
 
 | 缺陷 | 症狀 | 修正 |
 |------|------|------|
@@ -490,3 +506,5 @@ epic/
 可自由使用、修改與再散布（含商業用途），條件是**著作權聲明與授權條款需隨之保留**。該聲明已隨 VSIX 內含（`LICENSE.txt`），兩個 NuGet 套件也以 `PackageLicenseExpression` 宣告，使用者取得套件時會自動收到。
 
 本軟體按現狀提供，不附任何擔保——另請參閱開頭的實驗性專案警告。
+
+

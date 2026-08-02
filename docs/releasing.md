@@ -58,7 +58,8 @@ The version lives in three places and they are deliberately independent:
 
 - `sdk/Orika.NET.Sdk/Orika.NET.Sdk.csproj` — the SDK package version, referenced by every `.goproj` as `Sdk="Orika.NET.Sdk/<version>"`, so bumping it is a breaking change for existing projects.
 - `templates/Orika.Go.Templates.csproj` — the template package version.
-- `vsix/OrikaGo.LanguageService/source.extension.vsixmanifest` — the extension version. **VSIXInstaller silently no-ops when the installed version matches**, which is why `install-vsix.ps1` uninstalls first rather than relying on a version bump.
+- `src/csharp/OrikaGo.LanguageService/source.extension.vsixmanifest` — the extension version. **VSIXInstaller silently no-ops when the installed version matches**, which is why `install-vsix.ps1` uninstalls first rather than relying on a version bump.
 
 The git tag names the release as a whole and does not have to match any of
 them.
+

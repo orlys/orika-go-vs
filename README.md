@@ -7,6 +7,13 @@
 >
 > Use it if the idea interests you and you are comfortable diagnosing an IDE that misbehaves. Do not put it in front of a team that just needs to ship.
 
+> [!NOTE]
+> **Built entirely by vibe coding.** Every artifact here — the MSBuild SDK, the VSIX, the Go sidecar, and these documents — was produced by an AI agent driven through conversation, with the author setting direction and accepting or rejecting results rather than writing the code.
+>
+> What that does *not* mean is that things were guessed at. Design decisions came from decompiling the in-box components that solve the same problem, and the behavioural claims in this README were established by running the thing: DAP protocol logs, before/after reproduction scripts, screenshots of the actual IDE. Failed approaches are recorded alongside the working ones in [`docs/pitfalls.md`](docs/pitfalls.md).
+>
+> What it *does* mean is that no human has reviewed every line. Judge it accordingly.
+
 [繁體中文說明](README.zh-TW.md)
 
 ![Visual Studio editing a Go project: a .goproj declaring GoModuleReference for github.com/oklog/ulid/v2, main.go with Go syntax colouring, a breakpoint and gopls reporting no issues, the Dependencies context menu offering only "Add Go Module Reference..." and "Tidy Go Modules", and the "Orika Go" output pane showing completed go mod tidy and go generate runs.](img/1.png)
@@ -224,18 +231,18 @@ Notes:
 
 ## Compiler Platform API (Orika.Go.CodeAnalysis)
 
-`compiler/` provides a Roslyn-shaped Go compiler platform:
+`src/csharp/Orika.Go.CodeAnalysis` + `src/go/orika-goc` provides a Roslyn-shaped Go compiler platform:
 
-- **`compiler/orika-goc/`** — the Go sidecar CLI, itself a `.goproj` (dogfooding Orika.NET.Sdk). It implements three command families — `parse` / `check` / `symbol` — on top of `go/parser` and `go/types`, all emitting JSON; it returns exit code 0 even when the source has errors (only infrastructure errors return non-zero).
-- **`compiler/Orika.Go.CodeAnalysis/`** — a net10.0 class library that uses the sidecar to provide `GoSyntaxTree` (syntax trees), `GoCompilation` (diagnostics and `Emit`, which actually runs `go build -o`), and `GoSemanticModel` (semantic queries).
-- **`compiler/Orika.Go.CodeAnalysis.Tests/`** — xUnit tests (`dotnet test`; all 23 pass).
+- **`src/go/orika-goc/`** — the Go sidecar CLI, itself a `.goproj` (dogfooding Orika.NET.Sdk). It implements three command families — `parse` / `check` / `symbol` — on top of `go/parser` and `go/types`, all emitting JSON; it returns exit code 0 even when the source has errors (only infrastructure errors return non-zero).
+- **`src/csharp/Orika.Go.CodeAnalysis/`** — a net10.0 class library that uses the sidecar to provide `GoSyntaxTree` (syntax trees), `GoCompilation` (diagnostics and `Emit`, which actually runs `go build -o`), and `GoSemanticModel` (semantic queries).
+- **`test/csharp/Orika.Go.CodeAnalysis.Tests/`** — xUnit tests (`dotnet test`; all 23 pass).
 
 The sidecar lookup order is: explicit path argument > the `ORIKA_GOC` environment variable > next to the `Orika.Go.CodeAnalysis` assembly > `PATH`. Building the sidecar and setting the environment variable is enough:
 
 ```powershell
-dotnet build compiler/orika-goc/orika-goc.goproj
-$env:ORIKA_GOC = "$PWD\compiler\orika-goc\bin\Debug\orika-goc.exe"
-dotnet test compiler/Orika.Go.CodeAnalysis.Tests
+dotnet build src/go/orika-goc/orika-goc.goproj
+$env:ORIKA_GOC = "$PWD\src\go\orika-goc\bin\Debug\orika-goc.exe"
+dotnet test test/csharp/Orika.Go.CodeAnalysis.Tests
 ```
 
 A short example:
@@ -305,7 +312,7 @@ End-to-end verification (DTE automation, corroborated by DAP protocol logs): set
 
 The VSIX's `GoLanguageClient` (`ILanguageClient`, responsible for starting `gopls serve`) was previously attached to `[ContentType("go")]`, but **no assembly exports a content type named `go`**, so Visual Studio never called `ActivateAsync` and gopls was never started. Editing, navigation, refactoring, and diagnostics were all blocked by this one gap.
 
-`vsix/OrikaGo.LanguageService/GoContentTypeDefinitions.cs` now genuinely exports the content type and the file-extension mapping:
+`src/csharp/OrikaGo.LanguageService/GoContentTypeDefinitions.cs` now genuinely exports the content type and the file-extension mapping:
 
 ```csharp
 public const string ContentTypeName = "OrikaGo";
@@ -395,21 +402,33 @@ External file awareness was measured too: creating a new `.go` file on disk that
 
 ```
 epic/
-├── epic.slnx                    # Solution file (new XML format; Type="C#" makes VS load .goproj with the SDK project system)
-├── epic.goproj                  # Project file using Orika.NET.Sdk
-├── go.mod                      # Go module definition (the go directive is managed by the SDK from LangVersion)
-├── main.go                     # Entry point
-├── greeting.go                 # Greet helper function
-├── greeting_test.go            # Tests run by go test
-├── Properties/launchSettings.json
-├── sdk/Orika.NET.Sdk/          # The SDK itself (Sdk.props / Sdk.targets / packaging project)
-├── templates/                  # Orika.Go.Templates template package (go-console / go-lib)
-├── compiler/                   # Compiler platform: the orika-goc sidecar, Orika.Go.CodeAnalysis(+.Tests)
-├── vsix/OrikaGo.LanguageService/ # VS language service VSIX (gopls LSP + goproj.pkgdef: standalone project type GUID {8A0FBF95-...}, pointing at the CPS package following the msbuildproj pattern)
-├── packages/                   # Local NuGet feed (output of build-sdk.ps1)
+├── epic.slnx                        # Solution file (new XML format; Type="C#" makes VS load .goproj with the SDK project system)
+├── go.work                          # Go workspace listing the sample and the sidecar module
+├── LICENSE                          # MIT
+├── src/
+│   ├── csharp/
+│   │   ├── Orika.Go.CodeAnalysis/   # Roslyn-shaped compiler platform API
+│   │   └── OrikaGo.LanguageService/ # VS extension (gopls LSP client, delve debug integration, commands, icons)
+│   └── go/
+│       └── orika-goc/               # The Go sidecar: parse / check / symbol over go/packages
+├── test/
+│   └── csharp/
+│       └── Orika.Go.CodeAnalysis.Tests/
+├── sdk/Orika.NET.Sdk/               # The SDK itself (Sdk.props / Sdk.targets / packaging project)
+├── templates/                       # Orika.Go.Templates template package (go-console / go-lib)
+├── samples/hello/                   # Sample Go project consumed by the SDK; also the smoke test
+├── docs/                            # pitfalls.md, debug-parity-plan.md, releasing.md
+├── img/                             # Screenshots used by the READMEs
 ├── nuget.config
-└── build-sdk.ps1
+├── build-sdk.ps1                    # Pack the SDK into the local feed
+├── build-release.ps1                # Build every shippable artifact into ./dist
+└── install-vsix.ps1                 # Rebuild + reinstall the extension
 ```
+
+Go test files must live next to the package they test — that is a Go toolchain
+rule, not a preference — so `test/` holds only the C# test project, and the Go
+tests stay in `samples/hello/greeting_test.go` and alongside the sidecar
+sources.
 
 ## Icons
 
@@ -420,7 +439,7 @@ epic/
 
 ## Correctness Fixes in the Compiler Platform
 
-An external review (codex) found three real defects in `compiler/`; all are fixed with tests added (total test count 11 → 23):
+An external review (codex) found three real defects in `src/csharp/Orika.Go.CodeAnalysis` + `src/go/orika-goc`; all are fixed with tests added (total test count 11 → 23):
 
 | Defect | Symptom | Fix |
 |------|------|------|
@@ -428,9 +447,9 @@ An external review (codex) found three real defects in `compiler/`; all are fixe
 | Checking and building could see different file sets | `Emit` accepts `Tags` / `OS` / `Arch`, but `GetDiagnostics()` had no corresponding options, and the sidecar always checked with `build.Default`. So `//go:build linux` code was not checked at all on Windows, yet would be compiled by `Emit(OS = "linux")`. | The sidecar's `check` / `symbol` gained `-tags` / `-goos` / `-goarch` (setting `GOOS` / `GOARCH` / `GOFLAGS=-tags=…` via `packages.Config.Env`). On the C# side `GoAnalysisOptions` was added and `GoEmitOptions` now derives from it, so **the same options object** can be handed to `GetDiagnostics(options)`, `GetSemanticModel(options)`, and `Emit(path, options)` alike. The parameterless overloads are unchanged. |
 | Column units disagreed with the editor | Go's `token.Position.Column` is a **byte count within the line**, whereas .NET / Visual Studio / LSP use **UTF-16 code units**. On lines containing non-ASCII characters (for example `fmt.Println("你好世界", value)`), querying `GetSymbolAt` with the column VS reports returned `null`. | Convert at the sidecar's protocol boundary: byte column → UTF-16 column when emitting positions, and UTF-16 column → byte column when `symbol` accepts a position (converted by actually reading the raw bytes of that line). All three commands — `parse`, `check`, `symbol` — are consistent. `offset` remains a byte offset. The C# side's XML documentation now states the units explicitly. |
 
-How it was verified (`compiler/Orika.Go.CodeAnalysis.Tests/`): `GoModuleResolutionTests` uses real `go mod tidy` / `go build` as the baseline and requires `GetDiagnostics()` to agree with `go build`'s verdict; `GoBuildContextTests` checks that files under `//go:build linux` and custom tags are "invisible by default, visible only when the build context is specified"; `GoColumnUnitTests` uses source containing `你好世界` / `名前` to confirm that columns are in UTF-16 units (and that the old byte columns no longer resolve successfully). All 11 of these new tests failed against the pre-fix sidecar.
+How it was verified (`test/csharp/Orika.Go.CodeAnalysis.Tests/`): `GoModuleResolutionTests` uses real `go mod tidy` / `go build` as the baseline and requires `GetDiagnostics()` to agree with `go build`'s verdict; `GoBuildContextTests` checks that files under `//go:build linux` and custom tags are "invisible by default, visible only when the build context is specified"; `GoColumnUnitTests` uses source containing `你好世界` / `名前` to confirm that columns are in UTF-16 units (and that the old byte columns no longer resolve successfully). All 11 of these new tests failed against the pre-fix sidecar.
 
-> The sidecar now depends on `golang.org/x/tools` (see `compiler/orika-goc/go.mod` / `go.sum`). Because `check` type-checks dependency packages from source via `go list`, a single check takes several seconds.
+> The sidecar now depends on `golang.org/x/tools` (see `src/go/orika-goc/go.mod` / `go.sum`). Because `check` type-checks dependency packages from source via `go list`, a single check takes several seconds.
 
 ## Correctness Fixes in the MSBuild SDK
 
@@ -459,7 +478,7 @@ The third review (an internal multi-agent adversarial workflow running in parall
 | RID validation blocked explicit overrides | `_GoValidatePublishRid` recognized only the six built-in RIDs, so even an explicit `-r freebsd-x64 -p:GoOS=freebsd -p:GoArch=amd64` was rejected. | It now errors only when the **effective value** (after merging the RID mapping with explicit `GoOS` / `GoArch`) is still empty; freebsd-x64 publish was measured to succeed. |
 | The diagnostic parser did not recognize cgo extensions | The regular expressions in `GoExec` and `GoCompilation` recognized only `.go/.s/.S/.c/.h`, so C/C++ compile errors like `helper.cpp:3:5: error:` were not navigable from the Error List. | Both extension sets were aligned with the full `@(GoNativeCompile)` list. |
 
-**Compiler platform (`compiler/`)**:
+**Compiler platform (`src/csharp/Orika.Go.CodeAnalysis` + `src/go/orika-goc`)**:
 
 | Defect | Symptom | Fix |
 |------|------|------|
@@ -469,7 +488,7 @@ The third review (an internal multi-agent adversarial workflow running in parall
 | A broken `go.mod` became an infra error | A typo in `go.mod` (a state every manual edit passes through) made `packages.Load` hard-fail, the sidecar exit 1, and the C# side's `GetDiagnostics()` throw an exception outright — violating the "broken source is data, exit 0" contract. | A load failure where the toolchain **did run** is now converted into a diagnostic pointing at the corresponding line of `go.mod` (taking the line number from `go.mod:5:` when it appears in the message), with exit 0; only "the go command does not exist / the directory does not exist" remains an infra error. |
 | Columns on the first line of a BOM file were off by one | The 3 bytes of a UTF-8 BOM count toward go/token's byte column, but the VS buffer strips the BOM; `utf16Len` counted U+FEFF as 1 unit, so every column on the first line was off by one (`toByteCol` had the mirror-image bug). | A leading U+FEFF now counts as 0 UTF-16 units; `toByteCol` skips the BOM's 3 bytes before counting (editor column 1 ↔ byte column 4). Measured on a BOM file, `parse` reports File at column 1 and the `main` identifier at column 9, matching the VS buffer. |
 
-**VSIX (`vsix/OrikaGo.LanguageService/`)**:
+**VSIX (`src/csharp/OrikaGo.LanguageService/`)**:
 
 | Defect | Symptom | Fix |
 |------|------|------|
@@ -494,3 +513,5 @@ the VSIX as `LICENSE.txt` and is declared in both NuGet packages as
 
 The software is provided as is, without warranty — see the experimental-project
 warning at the top.
+
+
