@@ -482,3 +482,11 @@ epic/
 
 **後續使用者回報**：Solution Explorer 必須按「Show All Files」才看得到 `main.go`。根因在 `Microsoft.NET.Sdk.DefaultItems.props`——它先 `None Include="**/*"` 再 `None Remove="**/*$(DefaultLanguageSourceExtension)"` 把語言原始碼從 None 移走；`.goproj` 沒有語言 props,該屬性是**空字串**,`Remove` 變成 `**/*`,把剛建好的整個 None 清單抹掉,專案因此**沒有任何項目**。修正：`Sdk.props` 在巢狀 import 之後以相同的 Exclude 重跑一次 None glob（`-getItem:None` 由空清單變為完整檔案清單,含 `main.go`／`go.mod`／`go.work`）。
 
+
+## 授權
+
+[MIT](LICENSE) — Copyright (c) 2026 Orlys。
+
+可自由使用、修改與再散布（含商業用途），條件是**著作權聲明與授權條款需隨之保留**。該聲明已隨 VSIX 內含（`LICENSE.txt`），兩個 NuGet 套件也以 `PackageLicenseExpression` 宣告，使用者取得套件時會自動收到。
+
+本軟體按現狀提供，不附任何擔保——另請參閱開頭的實驗性專案警告。

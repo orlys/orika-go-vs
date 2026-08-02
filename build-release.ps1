@@ -28,6 +28,11 @@ $repoRoot = $PSScriptRoot
 $null = New-Item -ItemType Directory -Path $OutputDirectory -Force
 Get-ChildItem $OutputDirectory -File | Remove-Item -Force
 
+# MIT requires the notice to ship with the software; the VSIX carries its own
+# copy, so keep it identical to the repository LICENSE rather than letting the
+# two drift.
+Copy-Item (Join-Path $repoRoot 'LICENSE') (Join-Path $repoRoot 'vsix/OrikaGo.LanguageService/LICENSE.txt') -Force
+
 # --- VSIX -------------------------------------------------------------------
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
 $vsPath = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Workload.VisualStudioExtension -property installationPath

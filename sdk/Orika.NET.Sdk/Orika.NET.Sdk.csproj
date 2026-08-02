@@ -6,7 +6,13 @@
     <Version>1.0.0</Version>
     <PackageType>MSBuildSdk</PackageType>
     <Description>MSBuild project SDK for building, running, testing, and publishing Go projects with the dotnet CLI.</Description>
-    <Authors>Orika</Authors>
+    <Authors>Orlys</Authors>
+    <Copyright>Copyright (c) 2026 Orlys</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/orlys/orika-go-vs</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/orlys/orika-go-vs</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>go;golang;msbuild;sdk;visual-studio</PackageTags>
 
     <!-- This package carries only MSBuild logic (Sdk/Sdk.props + Sdk/Sdk.targets); ship no assembly, no deps. -->
     <IncludeBuildOutput>false</IncludeBuildOutput>

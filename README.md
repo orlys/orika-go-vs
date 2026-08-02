@@ -482,3 +482,15 @@ Verification: compiler tests 26/26 (including the new Emit UTF-16 column test); 
 
 **A follow-up user report**: Solution Explorer required "Show All Files" before `main.go` was visible. The root cause is in `Microsoft.NET.Sdk.DefaultItems.props` — it first does `None Include="**/*"` and then `None Remove="**/*$(DefaultLanguageSourceExtension)"` to take language source files out of None; `.goproj` has no language props, so that property is an **empty string**, the `Remove` becomes `**/*`, and it wipes out the entire None list that was just built, leaving the project with **no items at all**. The fix: after the nested imports, `Sdk.props` re-runs the None glob with the same Exclude (`-getItem:None` went from an empty list to the full file list, including `main.go` / `go.mod` / `go.work`).
 
+
+## License
+
+[MIT](LICENSE) — Copyright (c) 2026 Orlys.
+
+You may use, modify and redistribute this, including commercially, provided the
+copyright notice and the licence text travel with it. The notice ships inside
+the VSIX as `LICENSE.txt` and is declared in both NuGet packages as
+`PackageLicenseExpression`, so a consumer receives it automatically.
+
+The software is provided as is, without warranty — see the experimental-project
+warning at the top.

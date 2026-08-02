@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
-    <Identity Id="OrikaGo.LanguageService" Version="1.0.0" Language="en-US" Publisher="Orika" />
+    <Identity Id="OrikaGo.LanguageService" Version="1.0.0" Language="en-US" Publisher="Orlys" />
     <DisplayName>Orika Go Language Service</DisplayName>
     <Description xml:space="preserve">Go language support for Visual Studio powered by gopls over the Language Server Protocol: completion, hover, signature help, go-to-definition, find references, rename, formatting, and diagnostics for .go files. Requires gopls on PATH or in %USERPROFILE%\go\bin.</Description>
+    <!-- Element order is fixed by the vsx-schema: MoreInfo precedes License,
+         and Tags comes last. -->
+    <MoreInfo>https://github.com/orlys/orika-go-vs</MoreInfo>
+    <License>LICENSE.txt</License>
+    <Tags>Go, golang, gopls, delve, debugger, language service</Tags>
   </Metadata>
   <Installation>
     <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[18.0,19.0)">

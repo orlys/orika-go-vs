@@ -93,6 +93,13 @@
       <IncludeInVSIX>true</IncludeInVSIX>
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
+    <!-- MIT requires the notice to travel with the software, so it ships
+         inside the VSIX and is referenced by <License> in the manifest.
+         Kept in sync with the repository LICENSE by build-release.ps1. -->
+    <Content Include="LICENSE.txt">
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
     <!-- Registers the custom Go image monikers with the VS image service. VS
          discovers *.imagemanifest files in installed extension directories
          automatically; no vsixmanifest <Asset> or pkgdef entry is needed. -->
